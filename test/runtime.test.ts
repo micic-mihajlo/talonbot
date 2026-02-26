@@ -169,6 +169,45 @@ describe('HTTP control runtime', () => {
     const aliases = await requestHttp<{ aliases: Array<{ alias: string; sessionKey: string }> }>(httpPort, '/aliases');
     expect(aliases.statusCode).toBe(200);
     expect(aliases.payload.aliases.some((item) => item.alias === 'team' && item.sessionKey === sessionKey)).toBe(true);
+
+    const aliasRemove = await requestHttp<{ removed: boolean; alias: string }>(httpPort, '/alias', {
+      method: 'POST',
+      body: {
+        action: 'remove',
+        alias: 'team',
+      },
+    });
+    expect(aliasRemove.statusCode).toBe(200);
+    expect(aliasRemove.payload.alias).toBe('team');
+    expect(aliasRemove.payload.removed).toBe(true);
+
+    const aliasesAfter = await requestHttp<{ aliases: Array<{ alias: string; sessionKey: string }> }>(httpPort, '/aliases');
+    expect(aliasesAfter.statusCode).toBe(200);
+    expect(aliasesAfter.payload.aliases.some((item) => item.alias === 'team')).toBe(false);
+
+    const status = await requestHttp<{
+      status: string;
+      process: { pid: number; node: string };
+      config: {
+        dataDir: string;
+        transport: {
+          slack: boolean;
+          discord: boolean;
+          controlSocket: string;
+        };
+        engineMode: string;
+      };
+      sessions: unknown[];
+      aliases: Array<{ alias: string; sessionKey: string }>;
+    }>(httpPort, '/status');
+    expect(status.statusCode).toBe(200);
+    expect(status.payload.status).toBe('ok');
+    expect(status.payload.process.pid).toBeGreaterThan(0);
+    expect(status.payload.process.node).toBe(process.version);
+    expect(status.payload.config.dataDir).toBe(workingDirectory);
+    expect(status.payload.config.engineMode).toBe('mock');
+    expect(Array.isArray(status.payload.sessions)).toBe(true);
+    expect(Array.isArray(status.payload.aliases)).toBe(true);
   });
 });
 
@@ -298,6 +337,24 @@ describe('HTTP control auth gating', () => {
     });
     expect(aliasAllowed.statusCode).toBe(200);
     expect(Array.isArray(aliasAllowed.payload.aliases)).toBe(true);
+
+    const statusDenied = await requestHttp<{ error: string }>(httpPort, '/status');
+    expect(statusDenied.statusCode).toBe(401);
+    expect(statusDenied.payload.error).toBe('unauthorized');
+
+    const statusAllowed = await requestHttp<{ status: string; aliases: unknown[]; sessions: unknown[] }>(
+      httpPort,
+      '/status',
+      {
+        headers: {
+          Authorization: 'Bearer super-secret-token',
+        },
+      },
+    );
+    expect(statusAllowed.statusCode).toBe(200);
+    expect(statusAllowed.payload.status).toBe('ok');
+    expect(Array.isArray(statusAllowed.payload.sessions)).toBe(true);
+    expect(Array.isArray(statusAllowed.payload.aliases)).toBe(true);
   });
 });
 

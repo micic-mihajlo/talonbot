@@ -23,3 +23,66 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test
+
+      - name: Doctor preflight
+        run: >
+          ENGINE_MODE=mock
+          CONTROL_AUTH_TOKEN=ci-control-token-very-long-without-shortcuts
+          DISCORD_ENABLED=true
+          DISCORD_TOKEN=ci-discord-token-placeholder
+          CONTROL_HTTP_PORT=8080
+          npm run doctor -- --strict
+
+      - name: Runtime smoke test
+        run: |
+          set -euo pipefail
+
+          CONTROL_AUTH_TOKEN=ci-control-token-very-long-without-shortcuts \
+          CONTROL_HTTP_PORT=8080 \
+          ENGINE_MODE=mock \
+          node dist/index.js > /tmp/talonbot-runtime.log 2>&1 &
+          runtime_pid=$!
+
+          cleanup() {
+            kill "$runtime_pid" 2>/dev/null || true
+            wait "$runtime_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -sS http://127.0.0.1:8080/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "runtime failed to start"
+            cat /tmp/talonbot-runtime.log
+            exit 1
+          fi
+
+          if ! curl -sS -H "Authorization: Bearer ci-control-token-very-long-without-shortcuts" http://127.0.0.1:8080/status >/dev/null; then
+            echo "status endpoint failed"
+            cat /tmp/talonbot-runtime.log
+            exit 1
+          fi
+
+          if ! curl -sS -H "Authorization: Bearer ci-control-token-very-long-without-shortcuts" http://127.0.0.1:8080/sessions >/dev/null; then
+            echo "sessions endpoint failed"
+            cat /tmp/talonbot-runtime.log
+            exit 1
+          fi
+
+          curl -sS -H "Content-Type: application/json" -H "Authorization: Bearer ci-control-token-very-long-without-shortcuts" \
+            -d '{"source":"discord","channelId":"ci","text":"hello ci"}' \
+            http://127.0.0.1:8080/dispatch >/dev/null
+
+          ENGINE_MODE=mock \
+          CONTROL_AUTH_TOKEN=ci-control-token-very-long-without-shortcuts \
+          CONTROL_HTTP_PORT=8080 \
+          DISCORD_ENABLED=true \
+          DISCORD_TOKEN=ci-discord-token-placeholder \
+          npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token ci-control-token-very-long-without-shortcuts

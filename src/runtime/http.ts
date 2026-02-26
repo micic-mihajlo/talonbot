@@ -83,8 +83,33 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
         status: 'ok',
         uptime: process.uptime(),
         sessions: control.listSessions().length,
+        aliases: control.listAliases().length,
       };
       writeJson(res, 200, body);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/status') {
+      if (!requireAuth(req, config, res)) return;
+      writeJson(res, 200, {
+        status: 'ok',
+        uptime: process.uptime(),
+        process: {
+          pid: process.pid,
+          node: process.version,
+        },
+        config: {
+          dataDir: config.DATA_DIR,
+          transport: {
+            slack: config.SLACK_ENABLED,
+            discord: config.DISCORD_ENABLED,
+            controlSocket: config.CONTROL_SOCKET_PATH,
+          },
+          engineMode: config.ENGINE_MODE,
+        },
+        sessions: control.listSessions(),
+        aliases: control.listAliases(),
+      });
       return;
     }
 
@@ -180,7 +205,7 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
 
       try {
         const body = (await readJsonBody(req)) as {
-          action?: 'set' | 'unset' | 'resolve' | 'list';
+          action?: string;
           alias?: string;
           sessionKey?: string;
         };
@@ -210,7 +235,7 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
           return;
         }
 
-        if (body.action === 'unset') {
+        if (body.action === 'unset' || body.action === 'remove') {
           const previous = await control.removeAlias(body.alias);
           if (!previous) {
             writeJson(res, 404, { error: 'alias_not_found' });

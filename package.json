@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "doctor": "tsx src/diagnostics/doctor.ts",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "prepare": "mkdir -p dist",
