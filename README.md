@@ -40,6 +40,28 @@ cd /path/to/talonbot
 
 This generates a dedicated `talonbot.service`, enables it, and starts it on boot.
 
+## Discord-first quickstart
+
+If Discord is your primary transport:
+
+```bash
+cd /path/to/talonbot
+cp systemd/talonbot.env.template .env
+# edit .env:
+# DISCORD_ENABLED=true
+# DISCORD_TOKEN=your-discord-bot-token
+# CONTROL_AUTH_TOKEN=choose-a-long-random-string
+./install.sh --start
+```
+
+Invite the bot with standard message permissions (`Read Messages`, `Send Messages`), then run:
+
+```bash
+curl -s http://localhost:8080/sessions
+```
+
+You should see active sessions appear once messages are received.
+
 ## Quick smoke checks
 
 ```bash
