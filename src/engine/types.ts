@@ -1,0 +1,21 @@
+import type { InboundMessage } from '../shared/protocol';
+
+export interface EngineInput {
+  sessionKey: string;
+  route: string;
+  text: string;
+  senderId: string;
+  metadata: Record<string, string>;
+  contextLines: string[];
+  recentAttachments?: string[];
+  rawEvent: InboundMessage;
+}
+
+export interface EngineOutput {
+  text: string;
+}
+
+export interface AgentEngine {
+  complete(input: EngineInput): Promise<EngineOutput>;
+  ping(): Promise<boolean>;
+}
