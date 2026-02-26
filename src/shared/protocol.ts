@@ -116,6 +116,15 @@ export type ControlRpcCommand =
   | ControlRpcAbortCommand
   | ControlRpcSubscribeCommand;
 
+export interface ControlRpcUnknownCommand {
+  type: string;
+  id?: string;
+  sessionKey?: string;
+  [key: string]: unknown;
+}
+
+export type ControlRpcParsedCommand = ControlRpcCommand | ControlRpcUnknownCommand;
+
 export interface LegacyControlCommand {
   action:
     | 'send'

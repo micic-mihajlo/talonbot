@@ -311,12 +311,7 @@ export class AgentSession {
       });
       return result.text.trim();
     } catch (error) {
-      const summary = [
-        `Messages seen: ${messages.length}`,
-        `Last route: ${this.routeKey}`,
-        ...messages.slice(-Math.floor(this.config.SESSION_MAX_MESSAGES / 2)).map((message) => `${message.role}: ${message.content.slice(0, 220)}`),
-      ].join('\n');
-      return `Summary failed; fallback generated:\n${summary}`;
+      throw error instanceof Error ? error : new Error('Summarization failed');
     }
   }
 
@@ -361,6 +356,12 @@ export class AgentSession {
       throw new Error('Session is busy - wait for turn to complete');
     }
 
+    if (this.transcript.length === 0) {
+      throw new Error('No entries in session');
+    }
+
+    const alreadyAtRoot = this.state.turnIndex === 0;
+
     if (summarize) {
       throw new Error('Clear with summarization not supported via control RPC - use summarize=false');
     }
@@ -376,6 +377,8 @@ export class AgentSession {
       turnIndex: 0,
     };
     await this.store.writeSessionState(this.key, this.state);
+
+    return { cleared: true, alreadyAtRoot };
   }
 
   async abort() {

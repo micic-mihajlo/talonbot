@@ -7,6 +7,7 @@ import { routeFromMessage } from './route';
 import { SessionStore } from './store';
 import type {
   ControlRpcCommand,
+  ControlRpcParsedCommand,
   ControlRpcClearCommand,
   ControlRpcEvent,
   ControlRpcResponse,
@@ -127,18 +128,22 @@ export class ControlPlane {
     };
   }
 
-  parseControlRpc(command: unknown): ControlRpcCommand | null {
+  parseControlRpc(command: unknown): ControlRpcParsedCommand | null {
     if (!command || typeof command !== 'object') return null;
-    const raw = command as { type?: unknown; id?: unknown };
+    const raw = command as {
+      type?: unknown;
+      id?: unknown;
+      sessionKey?: unknown;
+      message?: unknown;
+      mode?: unknown;
+      summarize?: unknown;
+      event?: unknown;
+    };
     const commandType = typeof raw.type === 'string' ? raw.type : undefined;
     if (!commandType) return null;
 
-    if (!['send', 'get_message', 'get_summary', 'clear', 'abort', 'subscribe'].includes(commandType)) {
-      return null;
-    }
-
     if (commandType === 'send') {
-      return raw as ControlRpcSendCommand;
+      return raw as ControlRpcCommand;
     }
 
     if (commandType === 'clear') {
@@ -147,6 +152,13 @@ export class ControlPlane {
 
     if (commandType === 'subscribe') {
       return raw as ControlRpcSubscribeCommand;
+    }
+
+    if (!['get_message', 'get_summary', 'abort'].includes(commandType)) {
+      return {
+        type: commandType,
+        ...raw,
+      } as ControlRpcParsedCommand;
     }
 
     return {
@@ -312,10 +324,16 @@ export class ControlPlane {
         response.error = 'session_not_found';
         return response;
       }
-      const summary = await session.session.getSummary();
-      return {
-        summary,
-      };
+      try {
+        const summary = await session.session.getSummary();
+        return {
+          summary,
+        };
+      } catch (error) {
+        response.accepted = false;
+        response.error = error instanceof Error ? error.message : 'Summary failed';
+        return response;
+      }
     }
 
     if (command.action === 'clear') {
@@ -331,10 +349,14 @@ export class ControlPlane {
         response.error = 'session_not_found';
         return response;
       }
-      await session.session.clear(Boolean(command.summarize));
-      return {
-        cleared: true,
-      };
+      try {
+        const clearResult = await session.session.clear(Boolean(command.summarize));
+        return clearResult;
+      } catch (error) {
+        response.accepted = false;
+        response.error = error instanceof Error ? error.message : 'Clear failed';
+        return response;
+      }
     }
 
     if (command.action === 'abort') {
@@ -361,7 +383,11 @@ export class ControlPlane {
     return response;
   }
 
-  async handleSessionRpcCommand(sessionKey: string, command: ControlRpcCommand, socket?: net.Socket): Promise<ControlRpcResponse> {
+  async handleSessionRpcCommand(
+    sessionKey: string,
+    command: ControlRpcParsedCommand,
+    socket?: net.Socket,
+  ): Promise<ControlRpcResponse> {
     const id = 'id' in command && typeof command.id === 'string' ? command.id : undefined;
     const result = (success: boolean, commandName: string, data?: unknown, error?: string): ControlRpcResponse => ({
       type: 'response',
@@ -432,9 +458,10 @@ export class ControlPlane {
         receivedAt: new Date().toISOString(),
       };
       await session.session.enqueue(inbound);
+      const mode = session.session.isIdle ? 'direct' : command.mode || 'steer';
       return result(true, 'send', {
         delivered: true,
-        mode: command.mode || 'steer',
+        mode,
       });
     }
 
@@ -454,8 +481,8 @@ export class ControlPlane {
 
     if (command.type === 'clear') {
       try {
-        await session.session.clear(Boolean(command.summarize));
-        return result(true, 'clear', { cleared: true, summarise: command.summarize });
+        const clearResult = await session.session.clear(Boolean(command.summarize));
+        return result(true, 'clear', clearResult);
       } catch (error) {
         return result(false, 'clear', undefined, error instanceof Error ? error.message : 'Clear failed');
       }
@@ -783,6 +810,29 @@ export class ControlPlane {
                 if (command.type === 'subscribe' && command.event === 'turn_end') {
                   continue;
                 }
+                continue;
+              }
+
+              if (payload && typeof payload === 'object' && 'type' in payload) {
+                const parsedType = (payload as { type?: unknown }).type;
+                if (typeof parsedType !== 'string') {
+                  writeResponse(socket, {
+                    type: 'response',
+                    command: 'parse',
+                    success: false,
+                    error: 'Failed to parse command: Missing command type',
+                  });
+                  continue;
+                }
+              }
+
+              if (payload && typeof payload === 'object' && !('type' in payload)) {
+                writeResponse(socket, {
+                  type: 'response',
+                  command: 'parse',
+                  success: false,
+                  error: 'Failed to parse command: Missing command type',
+                });
                 continue;
               }
 
