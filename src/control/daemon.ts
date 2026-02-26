@@ -16,6 +16,7 @@ interface RunnerContext {
 }
 
 const STOP_COMMANDS = new Set(['!stop', '/stop', 'stop', '!shutdown', '/shutdown', 'shutdown']);
+const STATUS_COMMANDS = new Set(['!status', '/status', 'status']);
 
 export class ControlPlane {
   private readonly sessions = new Map<string, AgentSession>();
@@ -34,8 +35,20 @@ export class ControlPlane {
 
   async dispatch(message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
     const route = routeFromMessage(message);
-
     const normalized = message.text.trim();
+
+    if (this.isStatusCommand(normalized)) {
+      const current = this.sessions.get(route.sessionKey);
+      const status = current
+        ? `session=${route.sessionKey} active queue=${current.queueSize} last=${current.lastActiveAt}`
+        : `session=${route.sessionKey} inactive`;
+      await callbacks.reply(status);
+      return {
+        accepted: true,
+        reason: 'status_report',
+        sessionKey: route.sessionKey,
+      };
+    }
 
     if (this.isStopCommand(normalized)) {
       await this.stopSession(route.sessionKey);
@@ -64,6 +77,11 @@ export class ControlPlane {
   private isStopCommand(text: string) {
     const lowered = text.toLowerCase();
     return STOP_COMMANDS.has(lowered) || lowered.startsWith('!stop ') || lowered.startsWith('/stop ');
+  }
+
+  private isStatusCommand(text: string) {
+    const lowered = text.toLowerCase();
+    return STATUS_COMMANDS.has(lowered) || lowered.startsWith('!status ') || lowered.startsWith('/status ');
   }
 
   private async getOrCreateSession(route: ReturnType<typeof routeFromMessage>, callbacks: RunnerCallbacks) {
