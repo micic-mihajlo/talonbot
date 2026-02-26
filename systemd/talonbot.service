@@ -1,6 +1,7 @@
 [Unit]
-Description=talonbot (always-on engineer assistant)
-After=network.target
+Description=talonbot (always-on software-engineer agent)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -10,6 +11,7 @@ EnvironmentFile=/home/%i/talonbot/.env
 ExecStart=/usr/bin/env node /home/%i/talonbot/dist/index.js
 Restart=always
 RestartSec=5
+TimeoutStartSec=60
 LimitNOFILE=65536
 
 [Install]

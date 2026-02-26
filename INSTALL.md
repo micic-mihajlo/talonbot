@@ -42,6 +42,28 @@ sudo systemctl status talonbot.service
 sudo journalctl -u talonbot.service -f
 ```
 
+## Linux VPS bootstrap with explicit templates
+
+For explicit VPS control, you can use the template files directly:
+
+```bash
+cd /path/to/talonbot
+cp systemd/talonbot.env.template .env
+# Required: set at least CONTROL_AUTH_TOKEN and enabled transport tokens
+nano .env
+
+cp systemd/talonbot.service /etc/systemd/system/talonbot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now talonbot
+```
+
+Recommended:
+
+- Put runtime files under `/var/lib/talonbot` in `.env`.
+- Restrict `.env` file: `chmod 600 .env`.
+- Tail logs: `sudo journalctl -u talonbot -f`.
+- Restart after env changes: `sudo systemctl restart talonbot`.
+
 Foreground run for quick iteration:
 
 ```bash
