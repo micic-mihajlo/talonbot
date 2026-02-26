@@ -1,0 +1,48 @@
+name: release-snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate release snapshot metadata
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/talonbot-release
+          cp -R . /tmp/talonbot-release/source
+          SHA=$(git rev-parse --short=12 HEAD)
+          TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cat > /tmp/talonbot-release/release.json <<JSON
+          {
+            "sha": "$SHA",
+            "created_at": "$TS",
+            "source": "${GITHUB_REPOSITORY}",
+            "ref": "${GITHUB_REF_NAME}"
+          }
+          JSON
+
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: talonbot-release-snapshot
+          path: /tmp/talonbot-release

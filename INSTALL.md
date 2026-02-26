@@ -31,6 +31,7 @@ Validate the environment before long-lived deployment:
 ```bash
 npm run doctor
 npm run doctor -- --strict --runtime-url http://localhost:8080 --runtime-token "$CONTROL_AUTH_TOKEN"
+npm run cli -- status
 ```
 
 ## Linux daemon setup (systemd)

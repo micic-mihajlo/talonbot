@@ -7,6 +7,10 @@
 - Per-route session queues and persistent context
 - Operator control surface (HTTP + Unix socket)
 - Pluggable local execution engine (mock mode included)
+- Multi-agent task orchestration with worker lifecycle state
+- Repo registry + isolated git worktree execution pipeline
+- Release snapshots with atomic activation + rollback
+- Security audit, log redaction/retention, and diagnostics bundle generation
 
 ## Repository structure
 
@@ -105,6 +109,11 @@ Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-
 - `POST /dispatch` or `POST /send`
 - `POST /stop`
 - `POST /alias` with action `set|unset|resolve|list`
+- `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
+- `GET /repos`, `POST /repos/register`, `POST /repos/remove`
+- `POST /bridge/envelope`, `POST /webhook/github`
+- `GET /release/status`, `POST /release/update`, `POST /release/rollback`
+- `POST /audit`, `POST /diagnostics/bundle`
 
 Example:
 
@@ -152,3 +161,30 @@ Session data lives under:
 ## Production
 
 Use `INSTALL.md` for a basic `systemd` bootstrap.
+
+## Operator CLI
+
+Daemon installs place a global `talonbot` command in `/usr/local/bin/talonbot`.
+
+```bash
+npm run cli -- status
+npm run cli -- doctor
+npm run cli -- env set CONTROL_AUTH_TOKEN your-long-token
+npm run cli -- env get CONTROL_AUTH_TOKEN
+npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default true
+npm run cli -- tasks create --repo my-repo --text "Implement endpoint hardening"
+npm run cli -- tasks list
+npm run cli -- attach --session discord:12345:main
+npm run cli -- deploy --source /path/to/talonbot
+npm run cli -- rollback previous
+npm run cli -- audit
+npm run cli -- bundle --output /tmp
+npm run cli -- uninstall --force
+```
+
+Equivalent direct usage (after daemon install):
+
+```bash
+talonbot status
+talonbot tasks list
+```

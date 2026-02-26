@@ -1,0 +1,68 @@
+name: integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  runtime-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Launch runtime
+        run: |
+          set -euo pipefail
+          CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          CONTROL_HTTP_PORT=8090 \
+          ENGINE_MODE=mock \
+          node dist/index.js > /tmp/talonbot-integration.log 2>&1 &
+          runtime_pid=$!
+
+          cleanup() {
+            kill "$runtime_pid" 2>/dev/null || true
+            wait "$runtime_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for i in $(seq 1 45); do
+            if curl -sf http://127.0.0.1:8090/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -sf -H "Authorization: Bearer integration-control-token-abcdefghijklmnopqrstuvwxyz" \
+            http://127.0.0.1:8090/status >/dev/null
+
+          curl -sf -H "Content-Type: application/json" \
+            -H "Authorization: Bearer integration-control-token-abcdefghijklmnopqrstuvwxyz" \
+            -d '{"id":"repo","path":"'$PWD'","defaultBranch":"main","remote":"origin","isDefault":true}' \
+            http://127.0.0.1:8090/repos/register >/dev/null
+
+          curl -sf -H "Content-Type: application/json" \
+            -H "Authorization: Bearer integration-control-token-abcdefghijklmnopqrstuvwxyz" \
+            -d '{"text":"Run integration pathway.","repoId":"repo"}' \
+            http://127.0.0.1:8090/tasks >/tmp/talonbot-task.json
+
+          cat /tmp/talonbot-task.json
+
+      - name: Runtime doctor check
+        run: |
+          CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          npm run doctor -- --strict --runtime-url http://127.0.0.1:8090 --runtime-token integration-control-token-abcdefghijklmnopqrstuvwxyz

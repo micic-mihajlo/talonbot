@@ -24,6 +24,8 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
 
   const expandedDataDir = config.DATA_DIR.replace('~', process.env.HOME || '');
   const expandedSocketDir = path.dirname(config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || ''));
+  const expandedWorktreeDir = config.WORKTREE_ROOT_DIR.replace('~', process.env.HOME || '');
+  const expandedReleaseDir = config.RELEASE_ROOT_DIR.replace('~', process.env.HOME || '');
 
   if (!config.CONTROL_AUTH_TOKEN) {
     issues.push({
@@ -44,6 +46,14 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
       severity: 'error',
       area: 'engine',
       message: 'ENGINE_MODE=process requires ENGINE_COMMAND to be set.',
+    });
+  }
+
+  if (config.TASK_AUTO_PR && !config.TASK_AUTO_COMMIT) {
+    issues.push({
+      severity: 'warn',
+      area: 'orchestration',
+      message: 'TASK_AUTO_PR=true without TASK_AUTO_COMMIT=true will skip PR creation.',
     });
   }
 
@@ -78,6 +88,24 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
       severity: 'error',
       area: 'socket',
       message: `CONTROL_SOCKET_PATH directory is not writable (${expandedSocketDir}): ${socketDirErr}`,
+    });
+  }
+
+  const worktreeDirErr = ensureDirWritable(expandedWorktreeDir);
+  if (worktreeDirErr) {
+    issues.push({
+      severity: 'error',
+      area: 'orchestration',
+      message: `WORKTREE_ROOT_DIR is not writable (${expandedWorktreeDir}): ${worktreeDirErr}`,
+    });
+  }
+
+  const releaseDirErr = ensureDirWritable(expandedReleaseDir);
+  if (releaseDirErr) {
+    issues.push({
+      severity: 'error',
+      area: 'release',
+      message: `RELEASE_ROOT_DIR is not writable (${expandedReleaseDir}): ${releaseDirErr}`,
     });
   }
 

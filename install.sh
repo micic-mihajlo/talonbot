@@ -99,6 +99,20 @@ ENGINE_COMMAND=$ENGINE_COMMAND
 ENGINE_ARGS=$ENGINE_ARGS
 ENGINE_TIMEOUT_MS=${ENGINE_TIMEOUT_MS:-120000}
 
+REPO_ROOT_DIR=${REPO_ROOT_DIR:-$run_as_home/workspace}
+WORKTREE_ROOT_DIR=${WORKTREE_ROOT_DIR:-$run_as_home/workspace/worktrees}
+RELEASE_ROOT_DIR=${RELEASE_ROOT_DIR:-$run_as_home/.local/share/talonbot/releases}
+TASK_MAX_CONCURRENCY=${TASK_MAX_CONCURRENCY:-3}
+WORKER_MAX_RETRIES=${WORKER_MAX_RETRIES:-2}
+WORKTREE_STALE_HOURS=${WORKTREE_STALE_HOURS:-24}
+TASK_AUTOCLEANUP=${TASK_AUTOCLEANUP:-true}
+TASK_AUTO_COMMIT=${TASK_AUTO_COMMIT:-false}
+TASK_AUTO_PR=${TASK_AUTO_PR:-false}
+STARTUP_INTEGRITY_MODE=${STARTUP_INTEGRITY_MODE:-warn}
+SESSION_LOG_RETENTION_DAYS=${SESSION_LOG_RETENTION_DAYS:-14}
+ENABLE_WEBHOOK_BRIDGE=${ENABLE_WEBHOOK_BRIDGE:-true}
+BRIDGE_SHARED_SECRET=${BRIDGE_SHARED_SECRET:-}
+
 SLACK_ENABLED=${SLACK_ENABLED:-false}
 SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
 SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
@@ -168,6 +182,10 @@ EOF
   sudo install -m 0644 "$SERVICE_FILE" /etc/systemd/system/talonbot.service
   rm -f "$SERVICE_FILE"
 
+  if [ -f "$ROOT_DIR/bin/talonbot" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/talonbot" /usr/local/bin/talonbot
+  fi
+
   sudo systemctl daemon-reload
   sudo systemctl enable --now talonbot.service
 
@@ -175,6 +193,7 @@ EOF
   echo "Service installed and started:"
   echo "  sudo systemctl status talonbot.service"
   echo "  sudo journalctl -u talonbot.service -f"
+  echo "  talonbot status"
   exit 0
 fi
 

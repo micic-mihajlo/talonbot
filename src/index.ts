@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { config } from './config.js';
 import { createLogger } from './utils/logger.js';
 import { ControlPlane } from './control/index.js';
@@ -6,6 +7,9 @@ import { SlackTransport } from './transports/slack/index.js';
 import { DiscordTransport } from './transports/discord/index.js';
 import { createSocketServer } from './runtime/socket.js';
 import { validateStartupConfig } from './utils/startup.js';
+import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
+import { InboundBridge } from './bridge/inbound-bridge.js';
+import { ReleaseManager } from './ops/release-manager.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 
@@ -29,6 +33,24 @@ const run = async () => {
   const control = new ControlPlane(config);
   await control.initialize();
 
+  const taskOrchestrator = new TaskOrchestrator(config);
+  await taskOrchestrator.initialize();
+
+  const bridge = new InboundBridge(config.BRIDGE_SHARED_SECRET);
+  const releaseManager = new ReleaseManager(config.RELEASE_ROOT_DIR);
+  await releaseManager.initialize();
+
+  const integrity = await releaseManager.integrityCheck(config.STARTUP_INTEGRITY_MODE);
+  if (!integrity.ok) {
+    const details = `integrity check failed missing=${integrity.missing.length} mismatches=${integrity.mismatches.length}`;
+    if (config.STARTUP_INTEGRITY_MODE === 'strict') {
+      logger.error(details);
+      process.exit(1);
+    } else {
+      logger.warn(details);
+    }
+  }
+
   const transports: { stop: () => Promise<void> }[] = [];
   const runtimeHandles: { close: () => void | Promise<void> }[] = [];
 
@@ -45,7 +67,18 @@ const run = async () => {
   }
 
   if (config.CONTROL_HTTP_PORT > 0) {
-    const httpServer = await createHttpServer(control, config, config.CONTROL_HTTP_PORT, createLogger('runtime.http', config.LOG_LEVEL as any));
+    const httpServer = await createHttpServer(
+      control,
+      config,
+      config.CONTROL_HTTP_PORT,
+      createLogger('runtime.http', config.LOG_LEVEL as any),
+      {
+        tasks: taskOrchestrator,
+        bridge: config.ENABLE_WEBHOOK_BRIDGE ? bridge : undefined,
+        release: releaseManager,
+        diagnosticsOutputDir: path.join(config.DATA_DIR.replace('~', process.env.HOME || ''), 'diagnostics'),
+      },
+    );
     runtimeHandles.push({
       close: async () => {
         await new Promise<void>((resolve, reject) => {
