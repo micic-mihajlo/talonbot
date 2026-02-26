@@ -16,19 +16,49 @@
 - `src/transports/{slack,discord}` message ingress adapters
 - `src/runtime/{http,socket}.ts` control interfaces
 
-## Quick start (local)
+## Try it in 3 minutes (local, no API keys)
+
+No Slack/Discord credentials required for this path. Use the built-in mock engine:
 
 ```bash
 cd /path/to/talonbot
 cp .env.example .env
+
+cat > .env <<'EOF'
+ENGINE_MODE=mock
+ENGINE_COMMAND=
+CONTROL_HTTP_PORT=8080
+CONTROL_AUTH_TOKEN=
+SLACK_ENABLED=false
+DISCORD_ENABLED=false
+EOF
+
 npm install
 npm run build
-npm run dev
+npm run start
 ```
 
-Enable at least one transport before starting.
+The service starts immediately and listens on:
 
-## Control API (optional)
+- Unix socket: `${CONTROL_SOCKET_PATH}` (default `~/.local/share/talonbot/control.sock`)
+- HTTP control plane: port `8080` when set via `CONTROL_HTTP_PORT`
+
+## Quick smoke checks
+
+```bash
+curl -s http://localhost:8080/health
+curl -s http://localhost:8080/sessions
+curl -s -H "Content-Type: application/json" -d '{"source":"discord","channelId":"local","text":"hello bot","senderId":"you"}' http://localhost:8080/dispatch
+```
+
+You should get an accepted response from `/dispatch` and a reply text in logs/JSON.
+
+Enable one transport when you’re ready to connect real chat:
+
+- `SLACK_ENABLED=true` plus Slack tokens
+- `DISCORD_ENABLED=true` plus Discord token
+
+## Control API
 
 Set `CONTROL_HTTP_PORT` to a non-zero value.
 
@@ -47,6 +77,7 @@ curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CONT
   http://localhost:8080/dispatch
 
 Alias maintenance:
+```
 
 ```bash
 curl -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" \
