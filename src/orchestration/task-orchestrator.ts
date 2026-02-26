@@ -350,7 +350,40 @@ export class TaskOrchestrator {
             head: branch,
           });
           artifact.prUrl = prUrl;
-          artifact.checksSummary = await this.github.getPullRequestChecks(worktreePath, prUrl).catch(() => 'checks unavailable');
+          const checks = await this.github
+            .waitForPullRequestChecks(worktreePath, prUrl, {
+              timeoutMs: this.config.PR_CHECK_TIMEOUT_MS,
+              pollMs: this.config.PR_CHECK_POLL_MS,
+            })
+            .catch(() => ({
+              summary: 'checks unavailable',
+              passed: false,
+              pending: false,
+              total: 0,
+              failed: ['unavailable'],
+            }));
+          artifact.checksSummary = checks.summary;
+          artifact.checksPassed = checks.passed;
+
+          if (!checks.passed) {
+            task.artifact = artifact;
+            task.state = 'blocked';
+            task.escalationRequired = true;
+            task.error = `PR checks did not pass: ${checks.summary}`;
+            task.updatedAt = new Date().toISOString();
+            task.finishedAt = task.updatedAt;
+            task.events.push({
+              at: task.updatedAt,
+              kind: 'blocked',
+              message: task.error,
+              details: {
+                prUrl,
+              },
+            });
+            await this.persist();
+            this.updateParentState(task);
+            return;
+          }
         }
       }
 

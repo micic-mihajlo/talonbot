@@ -16,6 +16,8 @@
 - `TASK_AUTOCLEANUP` default: `true`
 - `TASK_AUTO_COMMIT` default: `false`
 - `TASK_AUTO_PR` default: `false`
+- `PR_CHECK_TIMEOUT_MS` default: `900000` (15 min)
+- `PR_CHECK_POLL_MS` default: `15000` (15 sec)
 - `WORKTREE_STALE_HOURS` default: `24`
 
 ## Release / integrity

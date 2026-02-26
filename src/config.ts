@@ -55,6 +55,8 @@ const schema = z.object({
   BRIDGE_RETRY_MAX_MS: z.coerce.number().int().min(500).max(600000).default(30000),
   BRIDGE_MAX_RETRIES: z.coerce.number().int().min(0).max(100).default(5),
   BRIDGE_STATE_FILE: z.string().default(`${process.env.HOME}/.local/share/talonbot/bridge/state.json`),
+  PR_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60 * 1000).default(15 * 60 * 1000),
+  PR_CHECK_POLL_MS: z.coerce.number().int().min(500).max(60 * 60 * 1000).default(15000),
 
   SLACK_ENABLED: bool.default(false),
   SLACK_BOT_TOKEN: z.string().default(''),

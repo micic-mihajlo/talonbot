@@ -7,6 +7,7 @@ export interface TaskArtifact {
   commitSha?: string;
   prUrl?: string;
   checksSummary?: string;
+  checksPassed?: boolean;
 }
 
 export interface TaskEvent {

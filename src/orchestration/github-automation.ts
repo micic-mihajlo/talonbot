@@ -3,6 +3,25 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+interface PullRequestCheckRecord {
+  conclusion?: string;
+  status?: string;
+  name?: string;
+}
+
+interface PullRequestView {
+  url?: string;
+  statusCheckRollup?: PullRequestCheckRecord[];
+}
+
+export interface PullRequestCheckState {
+  summary: string;
+  passed: boolean;
+  pending: boolean;
+  total: number;
+  failed: string[];
+}
+
 export class GitHubAutomation {
   async commitAll(worktreePath: string, message: string): Promise<string | null> {
     const status = await this.git(worktreePath, ['status', '--porcelain']);
@@ -45,26 +64,91 @@ export class GitHubAutomation {
     return out.stdout.trim();
   }
 
-  async getPullRequestChecks(worktreePath: string, prUrlOrNumber: string) {
+  async getPullRequestChecks(worktreePath: string, prUrlOrNumber: string): Promise<PullRequestCheckState> {
     const out = await this.gh(worktreePath, ['pr', 'view', prUrlOrNumber, '--json', 'url,statusCheckRollup']);
-    try {
-      const parsed = JSON.parse(out.stdout) as {
-        url?: string;
-        statusCheckRollup?: Array<{ conclusion?: string; status?: string; name?: string }>;
-      };
+    return this.parsePullRequestChecks(out.stdout);
+  }
 
-      const checks = (parsed.statusCheckRollup || []).map((check) => {
-        const state = check.conclusion || check.status || 'unknown';
+  async waitForPullRequestChecks(
+    worktreePath: string,
+    prUrlOrNumber: string,
+    options: {
+      timeoutMs: number;
+      pollMs: number;
+    },
+  ): Promise<PullRequestCheckState> {
+    const startedAt = Date.now();
+    let latest: PullRequestCheckState = {
+      summary: 'no checks reported',
+      passed: true,
+      pending: false,
+      total: 0,
+      failed: [],
+    };
+
+    while (Date.now() - startedAt <= options.timeoutMs) {
+      latest = await this.getPullRequestChecks(worktreePath, prUrlOrNumber);
+      if (!latest.pending) {
+        return latest;
+      }
+      await new Promise((resolve) => setTimeout(resolve, options.pollMs));
+    }
+
+    return {
+      ...latest,
+      passed: false,
+      pending: true,
+      summary: latest.summary ? `${latest.summary}, timeout` : 'timeout waiting for checks',
+    };
+  }
+
+  parsePullRequestChecks(raw: string): PullRequestCheckState {
+    try {
+      const parsed = JSON.parse(raw) as PullRequestView;
+      const checks = parsed.statusCheckRollup || [];
+      if (!checks.length) {
+        return {
+          summary: 'no checks reported',
+          passed: true,
+          pending: false,
+          total: 0,
+          failed: [],
+        };
+      }
+
+      const failed: string[] = [];
+      let pending = false;
+      const summary = checks.map((check) => {
+        const state = (check.conclusion || check.status || 'unknown').toLowerCase();
+        if (['queued', 'pending', 'in_progress', 'waiting', 'requested', 'expected'].includes(state)) {
+          pending = true;
+        }
+        if (['failure', 'failed', 'cancelled', 'timed_out', 'action_required', 'startup_failure'].includes(state)) {
+          failed.push(check.name || 'check');
+        }
         return `${check.name || 'check'}:${state}`;
       });
 
-      return checks.length ? checks.join(', ') : 'no checks reported';
+      return {
+        summary: summary.join(', ') || 'no checks reported',
+        passed: failed.length === 0 && !pending,
+        pending,
+        total: checks.length,
+        failed,
+      };
     } catch {
-      return out.stdout.trim() || 'check data unavailable';
+      const summary = raw.trim() || 'check data unavailable';
+      return {
+        summary,
+        passed: false,
+        pending: false,
+        total: 0,
+        failed: ['parse_error'],
+      };
     }
   }
 
-  private async git(cwd: string, args: string[]) {
+  protected async git(cwd: string, args: string[]) {
     return execFileAsync('git', args, {
       cwd,
       timeout: 120000,
@@ -74,7 +158,7 @@ export class GitHubAutomation {
     });
   }
 
-  private async gh(cwd: string, args: string[]) {
+  protected async gh(cwd: string, args: string[]) {
     return execFileAsync('gh', args, {
       cwd,
       timeout: 120000,
