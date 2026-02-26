@@ -22,19 +22,7 @@ No Slack/Discord credentials required for this path. Use the built-in mock engin
 
 ```bash
 cd /path/to/talonbot
-cp .env.example .env
-
-cat > .env <<'EOF'
-ENGINE_MODE=mock
-ENGINE_COMMAND=
-CONTROL_HTTP_PORT=8080
-CONTROL_AUTH_TOKEN=
-SLACK_ENABLED=false
-DISCORD_ENABLED=false
-EOF
-
-npm install
-npm run build
+./install.sh
 npm run start
 ```
 
@@ -42,6 +30,15 @@ The service starts immediately and listens on:
 
 - Unix socket: `${CONTROL_SOCKET_PATH}` (default `~/.local/share/talonbot/control.sock`)
 - HTTP control plane: port `8080` when set via `CONTROL_HTTP_PORT`
+
+If you want it as a long-running VPS service:
+
+```bash
+cd /path/to/talonbot
+./install.sh --daemon
+```
+
+This generates a dedicated `talonbot.service`, enables it, and starts it on boot.
 
 ## Quick smoke checks
 

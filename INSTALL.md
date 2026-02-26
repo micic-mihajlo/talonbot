@@ -1,46 +1,49 @@
 # Installation Notes
 
-## Linux daemon setup
+`./install.sh` keeps setup simple and VPS-friendly.
 
-Quick one-command smoke test (same repo, no API keys):
+By default it:
+- creates `.env` if missing (mock mode, no external tokens),
+- installs dependencies,
+- builds the app,
+- and prints next-step run commands.
+
+Set environment variables before running if you want different defaults:
+- `ENGINE_MODE` (`mock` or `process`)
+- `CONTROL_HTTP_PORT`
+- `SLACK_ENABLED`
+- `DISCORD_ENABLED`
+- `SERVICE_USER` (daemon mode, defaults to your user)
+- any transport secrets/tokens.
+
+## Local smoke test
 
 ```bash
 cd /path/to/talonbot
-cp .env.example .env
-
-cat > .env <<'EOF'
-ENGINE_MODE=mock
-ENGINE_COMMAND=
-CONTROL_HTTP_PORT=8080
-CONTROL_AUTH_TOKEN=
-SLACK_ENABLED=false
-DISCORD_ENABLED=false
-EOF
-
-npm install
-npm run build
+./install.sh
 node dist/index.js
 ```
 
-This gives you a running instance on `localhost:8080` and socket control for local testing.
+This gives you a running instance on `localhost:8080` with socket control for testing.
 
-Long-lived service:
-
-- Build once:
+## Linux daemon setup (systemd)
 
 ```bash
 cd /path/to/talonbot
-npm install
-npm run build
+sudo ./install.sh --daemon
 ```
 
-- Copy service file and set paths/user:
+This installs `/etc/systemd/system/talonbot.service`, enables it, and starts it.
+
+Check service:
 
 ```bash
-sudo cp systemd/talonbot.service /etc/systemd/system/talonbot@.service
-sudo systemctl daemon-reload
-sudo systemctl enable talonbot@youruser.service
-sudo systemctl start talonbot@youruser.service
+sudo systemctl status talonbot.service
+sudo journalctl -u talonbot.service -f
 ```
 
-Set `/home/youruser/talonbot/.env` before enabling.
+Foreground run for quick iteration:
+
+```bash
+./install.sh --start
+```
