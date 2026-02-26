@@ -11,6 +11,15 @@ npm run cli -- logs
 npm run cli -- doctor
 ```
 
+## Health and dependency checks
+
+```bash
+curl -s http://127.0.0.1:8080/health | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/status | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/bridge/status | jq
+```
+
 ## Task operations
 
 ```bash
@@ -21,6 +30,49 @@ npm run cli -- tasks get <task-id>
 npm run cli -- attach --session <session-key>
 ```
 
+## Release operations
+
+```bash
+npm run cli -- deploy --source /path/to/talonbot
+npm run cli -- rollback previous
+npm run cli -- rollback <release-sha>
+```
+
+Expected result for a successful deploy:
+- `/release/status` shows `current` pointing to the new release id.
+- `/health` dependency block shows the same release in `dependencies.release.current`.
+
+## Incident response runbook
+
+1. Triage impact:
+- Check `/health`, `/status`, and `npm run cli -- logs`.
+- Confirm whether failure is in transport, orchestration, bridge, release, or host environment.
+2. Stabilize:
+- Stop new risky actions (`npm run cli -- stop` if needed).
+- Run `npm run cli -- audit --deep` and `npm run doctor -- --strict`.
+3. Roll back if the active release is suspect:
+- `npm run cli -- rollback previous`.
+- Verify health and status endpoints.
+4. Recover service:
+- `npm run cli -- restart`.
+- Confirm session/task flow resumes.
+5. Preserve evidence:
+- `npm run cli -- bundle --output /tmp`.
+- Archive the diagnostics bundle with timestamp and incident id.
+
+## Rollback playbook
+
+1. Identify the target release:
+- `curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status`.
+2. Execute rollback:
+- `npm run cli -- rollback previous` or `npm run cli -- rollback <release-sha>`.
+3. Verify:
+- `/health` and `/release/status` both reflect the expected current release.
+- `npm run cli -- doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`.
+4. If verification fails:
+- Roll forward to a known-good explicit release id.
+- Collect diagnostics and hold deploys.
+
 ## Environment management
 
 ```bash
@@ -28,14 +80,6 @@ npm run cli -- env list
 npm run cli -- env get CONTROL_AUTH_TOKEN
 npm run cli -- env set CONTROL_AUTH_TOKEN your-long-token
 npm run cli -- env sync
-```
-
-## Release operations
-
-```bash
-npm run cli -- deploy --source /path/to/talonbot
-npm run cli -- rollback previous
-npm run cli -- rollback <release-sha>
 ```
 
 ## Security and diagnostics

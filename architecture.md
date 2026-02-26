@@ -13,6 +13,7 @@
 - runtime state: `<DATA_DIR>/sessions`, `<DATA_DIR>/tasks`, `<DATA_DIR>/repos`
 - memory: `<DATA_DIR>/memory/*.md`
 - releases: `<RELEASE_ROOT_DIR>/releases/<sha>` + `current` / `previous` symlinks
+- bridge state: `<DATA_DIR>/bridge/state.json` for envelope retries and poison tracking
 
 ## Task flow
 
@@ -21,3 +22,18 @@
 3. worker starts (`running`) in git worktree
 4. worker finishes (`done`) or escalates (`blocked`/`failed`)
 5. artifacts persist (summary, optional commit/PR/checks)
+
+## Release flow
+
+1. operator triggers deploy with source path
+2. release manager resolves deterministic release id from git revision or source fingerprint
+3. snapshot is copied to a release directory and manifest metadata is written
+4. activation verifies snapshot integrity and atomically updates `current`
+5. previous `current` target becomes `previous` for rollback
+
+## Failure domains
+
+- transport failures are isolated from task orchestration state.
+- worker failures are retried and escalate after retry budget exhaustion.
+- bridge dispatch failures are persisted and retried with backoff.
+- release activation fails closed when manifest verification does not pass.

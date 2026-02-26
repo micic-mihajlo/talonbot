@@ -11,9 +11,13 @@
     "dev": "tsx watch src/index.ts",
     "prepare": "mkdir -p dist",
     "test": "vitest run",
+    "test:unit": "vitest run test/startup-checks.test.ts test/control-plane.test.ts test/bridge-supervisor.test.ts",
+    "test:integration": "vitest run test/runtime.test.ts test/platform-capabilities.test.ts test/platform-resilience.test.ts",
+    "test:release": "vitest run test/release-endpoints.test.ts test/platform-capabilities.test.ts test/platform-resilience.test.ts",
     "test:shell": "vitest run test/shell-ops.test.ts",
+    "test:smoke": "bash scripts/ci/smoke-runtime.sh",
     "test:watch": "vitest",
-    "ci": "npm run build && npm run test && npm run test:shell",
+    "ci": "npm run build && npm run test:unit && npm run test:integration && npm run test:release && npm run test:shell && npm run test:smoke",
     "setup": "./install.sh"
   },
   "engines": {

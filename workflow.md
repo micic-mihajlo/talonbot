@@ -18,3 +18,18 @@ Parent task closes after all children complete.
 - automatic retry until `WORKER_MAX_RETRIES`
 - then task state moves to `failed`
 - `escalationRequired=true` signals operator handoff
+
+## Deploy and rollback workflow
+
+1. run `npm run doctor -- --strict`
+2. deploy: `npm run cli -- deploy --source /path/to/source`
+3. verify: `/health`, `/release/status`, `/bridge/status`
+4. if release is unstable, rollback: `npm run cli -- rollback previous`
+5. collect diagnostics bundle and open follow-up task
+
+## Day-2 hygiene workflow
+
+1. prune sessions and logs: `npm run cli -- prune`
+2. run audit: `npm run cli -- audit --deep`
+3. inspect bridge poison queue: `GET /bridge/status`
+4. inspect failed tasks and escalate owners
