@@ -1,2 +1,2 @@
-export { ControlPlane } from './daemon';
-export type { DispatchResult } from './daemon';
+export { ControlPlane } from './daemon.js';
+export type { DispatchResult } from './daemon.js';

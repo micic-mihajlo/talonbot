@@ -1,4 +1,4 @@
-import type { AgentEngine, EngineInput, EngineOutput } from './types';
+import type { AgentEngine, EngineInput, EngineOutput } from './types.js';
 
 export class MockEngine implements AgentEngine {
   async complete(input: EngineInput, _signal?: AbortSignal): Promise<EngineOutput> {

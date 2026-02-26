@@ -1,10 +1,10 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { createLogger } from '../utils/logger';
-import { ControlPlane } from '../control';
-import type { ControlDispatchPayload } from '../shared/protocol';
-import type { InboundMessage } from '../shared/protocol';
-import type { AppConfig } from '../config';
+import { createLogger } from '../utils/logger.js';
+import { ControlPlane } from '../control/index.js';
+import type { ControlDispatchPayload } from '../shared/protocol.js';
+import type { InboundMessage } from '../shared/protocol.js';
+import type { AppConfig } from '../config.js';
 
 const readJsonBody = (req: http.IncomingMessage): Promise<unknown> => {
   return new Promise((resolve, reject) => {

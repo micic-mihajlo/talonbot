@@ -1,8 +1,8 @@
-import { SerialQueue } from '../utils/queue';
-import type { RunnerCallbacks, InboundMessage } from '../shared/protocol';
-import type { AgentEngine } from '../engine/types';
-import type { AppConfig } from '../config';
-import { SessionStore } from './store';
+import { SerialQueue } from '../utils/queue.js';
+import type { RunnerCallbacks, InboundMessage } from '../shared/protocol.js';
+import type { AgentEngine } from '../engine/types.js';
+import type { AppConfig } from '../config.js';
+import { SessionStore } from './store.js';
 
 interface SessionTranscriptEntry {
   role: 'user' | 'assistant';

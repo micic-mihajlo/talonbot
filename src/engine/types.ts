@@ -1,4 +1,4 @@
-import type { InboundMessage } from '../shared/protocol';
+import type { InboundMessage } from '../shared/protocol.js';
 
 export interface EngineInput {
   sessionKey: string;

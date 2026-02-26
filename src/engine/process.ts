@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { AgentEngine, EngineInput, EngineOutput } from './types';
-import { Logger } from '../utils/logger';
+import type { AgentEngine, EngineInput, EngineOutput } from './types.js';
+import { Logger } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
 

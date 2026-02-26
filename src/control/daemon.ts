@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { AgentSession } from './session';
-import { routeFromMessage } from './route';
-import { SessionStore } from './store';
+import { AgentSession } from './session.js';
+import { routeFromMessage } from './route.js';
+import { SessionStore } from './store.js';
 import type {
   ControlRpcCommand,
   ControlRpcParsedCommand,
@@ -16,10 +16,10 @@ import type {
   LegacyControlCommand,
   RunnerCallbacks,
   InboundMessage,
-} from '../shared/protocol';
-import { buildEngine } from '../engine';
-import type { AppConfig } from '../config';
-import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases';
+} from '../shared/protocol.js';
+import { buildEngine } from '../engine/index.js';
+import type { AppConfig } from '../config.js';
+import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases.js';
 
 export interface DispatchResult {
   accepted: boolean;

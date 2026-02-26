@@ -1,4 +1,4 @@
-import { InboundMessage, NormalizedRoute } from '../shared/protocol';
+import { InboundMessage, NormalizedRoute } from '../shared/protocol.js';
 
 const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, '_');
 

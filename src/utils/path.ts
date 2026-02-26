@@ -4,7 +4,7 @@ import os from 'node:os';
 
 export const expandPath = (input: string) => {
   if (!input.startsWith('~')) return input;
-  return input.replace(/^~(?=$|\/) , os.homedir());
+  return input.replace(/^~(?=$|\/)/, os.homedir());
 };
 
 export const ensureDir = async (input: string) => {

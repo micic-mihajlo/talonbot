@@ -2,15 +2,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
-import { createLogger } from '../utils/logger';
-import { ControlPlane } from '../control';
-import type { AppConfig } from '../config';
+import { createLogger } from '../utils/logger.js';
+import { ControlPlane } from '../control/index.js';
+import type { AppConfig } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import type {
   ControlRpcEvent,
   ControlRpcResponse,
   InboundMessage,
-} from '../shared/protocol';
+} from '../shared/protocol.js';
 import type { Socket } from 'node:net';
 
 const safeSocketPath = (rawPath: string, home: string) => rawPath.replace('~', home);
@@ -81,27 +81,20 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
 
           if (rpcCommand) {
             const resolvedSessionKey = resolveSessionKey(control, rpcCommand.sessionKey);
-            if (!resolvedSessionKey && rpcCommand.type !== 'send') {
-              respondParseError(client, 'sessionKey required', rpcCommand.type, 'id' in rpcCommand ? rpcCommand.id : undefined);
+            if (!resolvedSessionKey) {
+              const id = 'id' in rpcCommand && typeof rpcCommand.id === 'string' ? rpcCommand.id : undefined;
+              writeResponse(client, {
+                type: 'response',
+                command: rpcCommand.type,
+                success: false,
+                error: 'sessionKey required',
+                id,
+              });
               continue;
             }
 
-            const target = resolvedSessionKey;
-            if (target) {
-              rpcCommand.sessionKey = target;
-              const response = await control.handleSessionRpcCommand(rpcCommand, client);
-              writeResponse(client, response);
-              continue;
-            }
-
-            const id = 'id' in rpcCommand && typeof rpcCommand.id === 'string' ? rpcCommand.id : undefined;
-            const response = {
-              type: 'response' as const,
-              command: rpcCommand.type,
-              success: false,
-              error: 'sessionKey required',
-              id,
-            };
+            rpcCommand.sessionKey = resolvedSessionKey;
+            const response = await control.handleSessionRpcCommand(resolvedSessionKey, rpcCommand, client);
             writeResponse(client, response);
             continue;
           }

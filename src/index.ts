@@ -1,10 +1,10 @@
-import { config } from './config';
-import { createLogger } from './utils/logger';
-import { ControlPlane } from './control';
-import { createHttpServer } from './runtime/http';
-import { SlackTransport } from './transports/slack';
-import { DiscordTransport } from './transports/discord';
-import { createSocketServer } from './runtime/socket';
+import { config } from './config.js';
+import { createLogger } from './utils/logger.js';
+import { ControlPlane } from './control/index.js';
+import { createHttpServer } from './runtime/http.js';
+import { SlackTransport } from './transports/slack/index.js';
+import { DiscordTransport } from './transports/discord/index.js';
+import { createSocketServer } from './runtime/socket.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 

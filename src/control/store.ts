@@ -2,8 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { ensureDir, joinSafe } from '../utils/path';
-import type { AliasMap } from './aliases';
+import { ensureDir, joinSafe } from '../utils/path.js';
+import type { AliasMap } from './aliases.js';
 
 const stringify = (value: unknown) => `${JSON.stringify(value)}\n`;
 

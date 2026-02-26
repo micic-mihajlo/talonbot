@@ -1,4 +1,4 @@
-import type { AppConfig } from '../config';
+import type { AppConfig } from '../config.js';
 
 export const hasMatch = (value: string, exact: string[]) => {
   if (!exact.length) return true;

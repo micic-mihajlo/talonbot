@@ -1,7 +1,7 @@
-import type { AppConfig } from '../config';
-import type { AgentEngine } from './types';
-import { MockEngine } from './mock';
-import { ProcessEngine } from './process';
+import type { AppConfig } from '../config.js';
+import type { AgentEngine } from './types.js';
+import { MockEngine } from './mock.js';
+import { ProcessEngine } from './process.js';
 
 export const buildEngine = (config: AppConfig): AgentEngine => {
   if (config.ENGINE_MODE === 'mock') {

@@ -1,10 +1,10 @@
 import { App, LogLevel } from '@slack/bolt';
-import type { AppConfig } from '../../config';
-import type { ControlPlane } from '../../control';
-import { createLogger } from '../../utils/logger';
-import { InboundMessage } from '../../shared/protocol';
-import { isAllowedSlack } from '../guards';
-import { config as envConfig } from '../../config';
+import type { AppConfig } from '../../config.js';
+import type { ControlPlane } from '../../control/index.js';
+import { createLogger } from '../../utils/logger.js';
+import { InboundMessage } from '../../shared/protocol.js';
+import { isAllowedSlack } from '../guards.js';
+import { config as envConfig } from '../../config.js';
 
 const logger = createLogger('transports.slack', envConfig.LOG_LEVEL as any);
 
