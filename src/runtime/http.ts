@@ -9,6 +9,7 @@ import type { AppConfig } from '../config.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import type { BridgeSupervisor } from '../bridge/supervisor.js';
 import type { ReleaseManager } from '../ops/release-manager.js';
+import type { SentryAgent } from '../orchestration/sentry-agent.js';
 import { runSecurityAudit } from '../security/audit.js';
 import { createDiagnosticsBundle } from '../diagnostics/bundle.js';
 import { ensureDir } from '../utils/path.js';
@@ -17,6 +18,7 @@ export interface RuntimeServices {
   tasks?: TaskOrchestrator;
   bridge?: BridgeSupervisor;
   release?: ReleaseManager;
+  sentry?: SentryAgent;
   diagnosticsOutputDir?: string;
 }
 
@@ -154,6 +156,7 @@ export const createHttpServer = (
               }
             : null,
           bridge: services?.bridge ? { enabled: true } : { enabled: false },
+          sentry: services?.sentry ? services.sentry.getStatus() : null,
         },
       };
       if (services?.bridge) {
@@ -556,6 +559,20 @@ export const createHttpServer = (
       writeJson(res, 200, {
         health: services.bridge.getHealth(),
         recent: services.bridge.listRecords(100),
+      });
+      return;
+    }
+
+    if (pathname === '/sentry/status' && req.method === 'GET') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.sentry) {
+        writeJson(res, 501, { error: 'sentry_not_configured' });
+        return;
+      }
+
+      writeJson(res, 200, {
+        status: services.sentry.getStatus(),
+        incidents: services.sentry.listIncidents(100),
       });
       return;
     }

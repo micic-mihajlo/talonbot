@@ -5,6 +5,7 @@
 - `control plane`: receives transport messages and operator commands
 - `task orchestrator`: tracks task lifecycle and worker execution
 - `dev workers`: task-scoped execution loops in isolated worktrees
+- `sentry agent`: monitors escalated tasks and records incidents
 - `bridge ingress`: normalizes webhook/envelope inputs with idempotency
 - `release manager`: snapshot, activate, rollback, integrity validation
 

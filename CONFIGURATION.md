@@ -33,6 +33,9 @@
 - `BRIDGE_RETRY_MAX_MS` default: `30000`
 - `BRIDGE_MAX_RETRIES` default: `5`
 - `BRIDGE_STATE_FILE` default: `<DATA_DIR>/bridge/state.json`
+- `SENTRY_ENABLED` default: `true`
+- `SENTRY_POLL_MS` default: `10000`
+- `SENTRY_STATE_FILE` default: `<DATA_DIR>/sentry/incidents.jsonl`
 
 ## Transport toggles
 

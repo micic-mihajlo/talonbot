@@ -18,6 +18,7 @@ curl -s http://127.0.0.1:8080/health | jq
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/status | jq
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status | jq
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/bridge/status | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/sentry/status | jq
 ```
 
 ## Task operations

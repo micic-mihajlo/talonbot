@@ -8,6 +8,7 @@
 - Operator control surface (HTTP + Unix socket)
 - Pluggable local execution engine (mock mode included)
 - Multi-agent task orchestration with worker lifecycle state
+- Optional sentry supervisor for escalations and incident tracking
 - Repo registry + isolated git worktree execution pipeline
 - Release snapshots with atomic activation + rollback
 - Security audit, log redaction/retention, and diagnostics bundle generation
@@ -113,6 +114,7 @@ Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-
 - `GET /repos`, `POST /repos/register`, `POST /repos/remove`
 - `POST /bridge/envelope`, `POST /webhook/github`
 - `GET /bridge/status`
+- `GET /sentry/status`
 - `GET /release/status`, `POST /release/update`, `POST /release/rollback`
 - `POST /audit`, `POST /diagnostics/bundle`
 

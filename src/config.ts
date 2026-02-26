@@ -57,6 +57,9 @@ const schema = z.object({
   BRIDGE_STATE_FILE: z.string().default(`${process.env.HOME}/.local/share/talonbot/bridge/state.json`),
   PR_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60 * 1000).default(15 * 60 * 1000),
   PR_CHECK_POLL_MS: z.coerce.number().int().min(500).max(60 * 60 * 1000).default(15000),
+  SENTRY_ENABLED: bool.default(true),
+  SENTRY_POLL_MS: z.coerce.number().int().min(500).max(60 * 60 * 1000).default(10000),
+  SENTRY_STATE_FILE: z.string().default(`${process.env.HOME}/.local/share/talonbot/sentry/incidents.jsonl`),
 
   SLACK_ENABLED: bool.default(false),
   SLACK_BOT_TOKEN: z.string().default(''),
