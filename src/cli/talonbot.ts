@@ -206,6 +206,7 @@ const help = () => {
   process.stdout.write(`  repos list|register|remove\n`);
   process.stdout.write(`  deploy|update [--source <path>]\n`);
   process.stdout.write(`  rollback [target]\n`);
+  process.stdout.write(`  sentry [status]\n`);
   process.stdout.write(`  audit [--deep]|prune [days]|firewall [--dry-run]\n`);
   process.stdout.write(`  bundle [--output <path>]\n`);
   process.stdout.write(`  uninstall --force [--purge]\n`);
@@ -383,6 +384,15 @@ const main = async () => {
   if (command === 'rollback') {
     json(await request('POST', '/release/rollback', { target: args[0] || 'previous' }));
     return;
+  }
+
+  if (command === 'sentry') {
+    const sub = args[0] || 'status';
+    if (sub === 'status') {
+      json(await request('GET', '/sentry/status'));
+      return;
+    }
+    throw new Error(`unknown sentry command: ${sub}`);
   }
 
   if (command === 'audit') {

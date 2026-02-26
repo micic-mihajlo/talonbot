@@ -89,6 +89,7 @@ npm run cli -- env sync
 npm run cli -- audit
 npm run cli -- prune
 npm run cli -- audit --deep
+npm run cli -- sentry status
 npm run cli -- firewall --dry-run
 npm run cli -- bundle --output /tmp
 ```
