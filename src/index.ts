@@ -29,7 +29,19 @@ const run = async () => {
 
   if (config.CONTROL_HTTP_PORT > 0) {
     const httpServer = await createHttpServer(control, config, config.CONTROL_HTTP_PORT, createLogger('runtime.http', config.LOG_LEVEL as any));
-    runtimeHandles.push({ close: async () => {\n      await new Promise<void>((resolve, reject) => {\n        httpServer.close((error) => {\n          if (error) {\n            reject(error);\n            return;\n          }\n          resolve();\n        });\n      });\n    }});
+    runtimeHandles.push({
+      close: async () => {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+      },
+    });
   }
 
   const socketServer = createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
