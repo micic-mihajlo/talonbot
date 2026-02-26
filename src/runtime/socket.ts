@@ -66,7 +66,7 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
     client.setEncoding('utf8');
 
     client.on('data', async (chunk) => {
-      buffer += chunk as string;
+      buffer += typeof chunk === 'string' ? chunk : chunk.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 

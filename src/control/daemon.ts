@@ -420,8 +420,8 @@ export class ControlPlane {
         this.turnEndSubscriptions.set(sessionKey, subs);
       }
 
-      const sub = { socket, subscriptionId };
       if (socket) {
+        const sub: TurnEndSubscription = { socket, subscriptionId };
         subs.add(sub);
         const cleanup = () => {
           const current = this.turnEndSubscriptions.get(sessionKey);
@@ -797,7 +797,7 @@ export class ControlPlane {
         let buffer = '';
 
         socket.on('data', async (chunk) => {
-          buffer += chunk as string;
+          buffer += typeof chunk === 'string' ? chunk : chunk.toString();
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 

@@ -15,7 +15,7 @@ export class SlackTransport {
   constructor(private readonly config: AppConfig, private readonly control: ControlPlane) {}
 
   private buildInboundMessage(message: any, threadTs: string | undefined, botUserId: string): InboundMessage {
-    const attachments = (message.files || []).map((file) => ({
+    const attachments = (message.files || []).map((file: { id?: string; name?: string; mimetype?: string; url_private?: string }) => ({
       id: file.id ?? `${file.name}-${Date.now()}`,
       filename: file.name,
       contentType: file.mimetype,
