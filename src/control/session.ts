@@ -363,7 +363,7 @@ export class AgentSession {
     const alreadyAtRoot = this.state.turnIndex === 0;
 
     if (summarize) {
-      throw new Error('Clear with summarization not supported via control RPC - use summarize=false');
+      throw new Error('Clear with summarization not supported via RPC - use summarize=false');
     }
 
     await this.store.clearSessionData(this.key);
@@ -378,7 +378,11 @@ export class AgentSession {
     };
     await this.store.writeSessionState(this.key, this.state);
 
-    return { cleared: true, alreadyAtRoot };
+    return {
+      cleared: true,
+      alreadyAtRoot,
+      targetId: 'root',
+    };
   }
 
   async abort() {

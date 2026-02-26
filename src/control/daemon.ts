@@ -328,6 +328,7 @@ export class ControlPlane {
         const summary = await session.session.getSummary();
         return {
           summary,
+          model: 'agent',
         };
       } catch (error) {
         response.accepted = false;
@@ -473,7 +474,10 @@ export class ControlPlane {
     if (command.type === 'get_summary') {
       try {
         const summary = await session.session.getSummary();
-        return result(true, 'get_summary', { summary });
+        return result(true, 'get_summary', {
+          summary,
+          model: 'agent',
+        });
       } catch (error) {
         return result(false, 'get_summary', undefined, error instanceof Error ? error.message : 'Summary failed');
       }
