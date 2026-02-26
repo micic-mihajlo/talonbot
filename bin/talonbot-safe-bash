@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: talonbot-safe-bash <command>"
+  exit 1
+fi
+
+COMMAND="$*"
+
+block() {
+  echo "blocked: $1"
+  exit 64
+}
+
+if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])rm[[:space:]]+-rf[[:space:]]+/( |$)'; then
+  block "dangerous recursive deletion"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(chmod|chown)[[:space:]].*/etc'; then
+  block "system permission modification"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(>|>>)[[:space:]]*/(etc|root)/'; then
+  block "writing to privileged paths"
+fi
+
+if echo "$COMMAND" | grep -E -qi 'curl[[:space:]].*\|[[:space:]]*(bash|sh)'; then
+  block "remote script execution pipeline"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(sudo[[:space:]]+su|su[[:space:]]+-)'; then
+  block "privilege escalation shell"
+fi
+
+exec bash -lc "$COMMAND"

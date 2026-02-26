@@ -68,6 +68,17 @@ const runNpm = (script: string, extraArgs: string[] = []) => {
   });
 };
 
+const runRepoScript = (scriptPath: string, extraArgs: string[] = [], extraEnv: Record<string, string> = {}) => {
+  const absolute = path.join(process.cwd(), scriptPath);
+  execFileSync(absolute, extraArgs, {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      ...extraEnv,
+    },
+  });
+};
+
 const envFilePath = () => process.env.TALONBOT_ENV_FILE || path.join(process.cwd(), '.env');
 
 const parseEnv = (raw: string) => {
@@ -184,29 +195,6 @@ const attachToSession = async (sessionKey: string) => {
   });
 };
 
-const uninstall = async (force: boolean) => {
-  if (!force) {
-    throw new Error('uninstall requires --force');
-  }
-
-  try {
-    runSystemctl('stop');
-  } catch {
-    // ignore stop failure
-  }
-
-  const dataDir = config.DATA_DIR.replace('~', process.env.HOME || '');
-  const releaseDir = config.RELEASE_ROOT_DIR.replace('~', process.env.HOME || '');
-  await fs.rm(dataDir, { recursive: true, force: true });
-  await fs.rm(releaseDir, { recursive: true, force: true });
-
-  json({
-    removed: true,
-    dataDir,
-    releaseDir,
-  });
-};
-
 const help = () => {
   process.stdout.write(`talonbot CLI\n\n`);
   process.stdout.write(`Commands:\n`);
@@ -218,9 +206,9 @@ const help = () => {
   process.stdout.write(`  repos list|register|remove\n`);
   process.stdout.write(`  deploy|update [--source <path>]\n`);
   process.stdout.write(`  rollback [target]\n`);
-  process.stdout.write(`  audit|prune\n`);
+  process.stdout.write(`  audit [--deep]|prune [days]|firewall [--dry-run]\n`);
   process.stdout.write(`  bundle [--output <path>]\n`);
-  process.stdout.write(`  uninstall --force\n`);
+  process.stdout.write(`  uninstall --force [--purge]\n`);
 };
 
 const main = async () => {
@@ -397,8 +385,21 @@ const main = async () => {
     return;
   }
 
-  if (command === 'audit' || command === 'prune') {
-    json(await request('POST', '/audit'));
+  if (command === 'audit') {
+    const deep = args.includes('--deep');
+    runRepoScript('bin/security-audit.sh', deep ? ['--deep'] : []);
+    return;
+  }
+
+  if (command === 'prune') {
+    const days = args[0] || process.env.SESSION_LOG_RETENTION_DAYS || '14';
+    runRepoScript('bin/prune-session-logs.sh', [days]);
+    return;
+  }
+
+  if (command === 'firewall') {
+    const dryRun = args.includes('--dry-run');
+    runRepoScript('bin/setup-firewall.sh', dryRun ? ['--dry-run'] : []);
     return;
   }
 
@@ -408,7 +409,12 @@ const main = async () => {
   }
 
   if (command === 'uninstall') {
-    await uninstall(args.includes('--force'));
+    const force = args.includes('--force');
+    if (!force) {
+      throw new Error('uninstall requires --force');
+    }
+    const purge = args.includes('--purge');
+    runRepoScript('bin/uninstall.sh', purge ? ['--purge'] : []);
     return;
   }
 

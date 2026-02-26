@@ -24,6 +24,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Shell ops tests
+        run: npm run test:shell
+
       - name: Doctor preflight
         run: >
           ENGINE_MODE=mock
@@ -86,3 +89,11 @@ jobs:
           DISCORD_ENABLED=true \
           DISCORD_TOKEN=ci-discord-token-placeholder \
           npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token ci-control-token-very-long-without-shortcuts
+
+      - name: Security audit smoke
+        run: |
+          DATA_DIR=/tmp/talonbot-data \
+          CONFIG_FILE=/tmp/talonbot-config.env \
+          RELEASE_ROOT_DIR=/tmp/talonbot-release \
+          STARTUP_INTEGRITY_MODE=warn \
+          bash -lc 'mkdir -p /tmp/talonbot-data/security /tmp/talonbot-release && echo CONTROL_AUTH_TOKEN=ci-control-token-very-long-without-shortcuts > /tmp/talonbot-config.env && ./bin/security-audit.sh'

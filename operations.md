@@ -43,6 +43,8 @@ npm run cli -- rollback <release-sha>
 ```bash
 npm run cli -- audit
 npm run cli -- prune
+npm run cli -- audit --deep
+npm run cli -- firewall --dry-run
 npm run cli -- bundle --output /tmp
 ```
 

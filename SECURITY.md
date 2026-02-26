@@ -13,6 +13,9 @@
 - Session logs are redacted and pruned through runtime audit flows.
 - Bridge ingestion supports signature verification + dedupe + poison detection.
 - Task retries escalate after configurable failure thresholds.
+- `bin/talonbot-safe-bash` blocks high-risk shell patterns.
+- `bin/verify-manifest.sh` performs startup integrity checks (`off` / `warn` / `strict`).
+- `bin/security-audit.sh` runs operational security posture checks (`--deep` optional).
 
 ## Operational checks
 
@@ -21,6 +24,7 @@ Use:
 ```bash
 npm run doctor -- --strict
 npm run cli -- audit
+npm run cli -- audit --deep
 ```
 
 ## Known risks

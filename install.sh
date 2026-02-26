@@ -170,10 +170,19 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$ROOT_DIR
 EnvironmentFile=$ENV_FILE
+ExecStartPre=/usr/bin/env bash $ROOT_DIR/bin/harden-permissions.sh
+ExecStartPre=/usr/bin/env bash $ROOT_DIR/bin/verify-manifest.sh
 ExecStart=$NODE_BIN $ROOT_DIR/dist/index.js
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/talonbot /home/$SERVICE_USER/.local/share/talonbot /home/$SERVICE_USER/workspace $ENV_FILE
 
 [Install]
 WantedBy=multi-user.target
@@ -184,6 +193,18 @@ EOF
 
   if [ -f "$ROOT_DIR/bin/talonbot" ]; then
     sudo install -m 0755 "$ROOT_DIR/bin/talonbot" /usr/local/bin/talonbot
+  fi
+  if [ -f "$ROOT_DIR/bin/talonbot-safe-bash" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/talonbot-safe-bash" /usr/local/bin/talonbot-safe-bash
+  fi
+  if [ -f "$ROOT_DIR/bin/security-audit.sh" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/security-audit.sh" /usr/local/bin/talonbot-security-audit
+  fi
+  if [ -f "$ROOT_DIR/bin/setup-firewall.sh" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/setup-firewall.sh" /usr/local/bin/talonbot-setup-firewall
+  fi
+  if [ -f "$ROOT_DIR/bin/uninstall.sh" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/uninstall.sh" /usr/local/bin/talonbot-uninstall
   fi
 
   sudo systemctl daemon-reload

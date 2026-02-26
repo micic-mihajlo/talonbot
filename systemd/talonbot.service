@@ -8,11 +8,20 @@ Type=simple
 User=%i
 WorkingDirectory=/home/%i/talonbot
 EnvironmentFile=/home/%i/talonbot/.env
+ExecStartPre=/usr/bin/env bash /home/%i/talonbot/bin/harden-permissions.sh
+ExecStartPre=/usr/bin/env bash /home/%i/talonbot/bin/verify-manifest.sh
 ExecStart=/usr/bin/env node /home/%i/talonbot/dist/index.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=60
 LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/talonbot /home/%i/.local/share/talonbot /home/%i/workspace /home/%i/talonbot/.env
 
 [Install]
 WantedBy=multi-user.target

@@ -11,8 +11,9 @@
     "dev": "tsx watch src/index.ts",
     "prepare": "mkdir -p dist",
     "test": "vitest run",
+    "test:shell": "vitest run test/shell-ops.test.ts",
     "test:watch": "vitest",
-    "ci": "npm run build && npm run test",
+    "ci": "npm run build && npm run test && npm run test:shell",
     "setup": "./install.sh"
   },
   "engines": {
