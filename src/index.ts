@@ -5,10 +5,27 @@ import { createHttpServer } from './runtime/http.js';
 import { SlackTransport } from './transports/slack/index.js';
 import { DiscordTransport } from './transports/discord/index.js';
 import { createSocketServer } from './runtime/socket.js';
+import { validateStartupConfig } from './utils/startup.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 
 const run = async () => {
+  const startupIssues = validateStartupConfig(config);
+  const hasStartupError = startupIssues.some((issue) => issue.severity === 'error');
+
+  for (const issue of startupIssues) {
+    if (issue.severity === 'error') {
+      logger.error(`[startup/${issue.area}] ${issue.message}`);
+    } else {
+      logger.warn(`[startup/${issue.area}] ${issue.message}`);
+    }
+  }
+
+  if (hasStartupError) {
+    logger.error('startup checks failed, aborting');
+    process.exit(1);
+  }
+
   const control = new ControlPlane(config);
   await control.initialize();
 

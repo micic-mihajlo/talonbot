@@ -47,6 +47,7 @@ const respondParseError = (socket: Socket, message: string, command?: string, id
 };
 
 const randomId = () => `socket-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const MAX_CONTROL_PAYLOAD_BYTES = 1_000_000;
 
 export const createSocketServer = (control: ControlPlane, config: AppConfig, logger = createLogger('runtime.socket', 'info')) => {
   const socketPath = safeSocketPath(config.CONTROL_SOCKET_PATH, os.homedir());
@@ -67,6 +68,12 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
 
     client.on('data', async (chunk) => {
       buffer += typeof chunk === 'string' ? chunk : chunk.toString();
+      if (buffer.length > MAX_CONTROL_PAYLOAD_BYTES) {
+        respondParseError(client, 'Failed to parse command: message too large');
+        buffer = '';
+        return;
+      }
+
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
@@ -163,7 +170,13 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
     });
   });
 
-  server.listen(socketPath);
+  server.listen(socketPath, () => {
+    try {
+      fs.chmodSync(socketPath, 0o600);
+    } catch {
+      // fallback to OS default permissions when chmod fails
+    }
+  });
 
   return {
     close: () => {

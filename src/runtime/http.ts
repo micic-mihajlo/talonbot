@@ -6,8 +6,28 @@ import type { ControlDispatchPayload } from '../shared/protocol.js';
 import type { InboundMessage } from '../shared/protocol.js';
 import type { AppConfig } from '../config.js';
 
+const setSecurityHeaders = (res: http.ServerResponse) => {
+  res.setHeader('content-type', 'application/json');
+  res.setHeader('cache-control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('pragma', 'no-cache');
+  res.setHeader('x-content-type-options', 'nosniff');
+};
+
+const writeJson = (res: http.ServerResponse, statusCode: number, body: unknown) => {
+  setSecurityHeaders(res);
+  res.statusCode = statusCode;
+  res.end(JSON.stringify(body));
+};
+
 const readJsonBody = (req: http.IncomingMessage): Promise<unknown> => {
   return new Promise((resolve, reject) => {
+    const contentType = req.headers['content-type'];
+    if (!contentType || !contentType.includes('application/json')) {
+      reject(new Error('invalid_content_type'));
+      req.resume();
+      return;
+    }
+
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
@@ -34,16 +54,27 @@ const readJsonBody = (req: http.IncomingMessage): Promise<unknown> => {
 const randomId = () => `http-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
 const unauthorized = (res: http.ServerResponse) => {
-  res.statusCode = 401;
-  res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify({ error: 'unauthorized' }));
+  writeJson(res, 401, { error: 'unauthorized' });
+};
+
+const requireAuth = (req: http.IncomingMessage, config: AppConfig, res: http.ServerResponse): boolean => {
+  if (!config.CONTROL_AUTH_TOKEN) {
+    return true;
+  }
+
+  const auth = req.headers['authorization'];
+  if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
+    unauthorized(res);
+    return false;
+  }
+
+  return true;
 };
 
 export const createHttpServer = (control: ControlPlane, config: AppConfig, port: number, logger = createLogger('runtime.http', 'info')) => {
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'POST') {
-      res.statusCode = 405;
-      res.end('Method Not Allowed');
+      writeJson(res, 405, { error: 'Method Not Allowed' });
       return;
     }
 
@@ -53,63 +84,43 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
         uptime: process.uptime(),
         sessions: control.listSessions().length,
       };
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify(body));
+      writeJson(res, 200, body);
       return;
     }
 
     if (req.method === 'GET' && req.url === '/sessions') {
+      if (!requireAuth(req, config, res)) return;
       const body = {
         sessions: control.listSessions(),
       };
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify(body));
+      writeJson(res, 200, body);
       return;
     }
 
     if (req.method === 'GET' && req.url === '/aliases') {
-      if (config.CONTROL_AUTH_TOKEN) {
-        const auth = req.headers['authorization'];
-        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
-          unauthorized(res);
-          return;
-        }
-      }
+      if (!requireAuth(req, config, res)) return;
 
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ aliases: control.listAliases() }));
+      writeJson(res, 200, { aliases: control.listAliases() });
       return;
     }
 
     if (req.method === 'POST' && (req.url === '/dispatch' || req.url === '/send')) {
-      if (config.CONTROL_AUTH_TOKEN) {
-        const auth = req.headers['authorization'];
-        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
-          unauthorized(res);
-          return;
-        }
-      }
+      if (!requireAuth(req, config, res)) return;
 
       try {
         const body = (await readJsonBody(req)) as Partial<ControlDispatchPayload>;
         if (typeof body.text !== 'string' || !body.text.trim()) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'text required' }));
+          writeJson(res, 400, { error: 'text required' });
           return;
         }
 
         if (!body.source || (body.source !== 'slack' && body.source !== 'discord')) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'source must be slack or discord' }));
+          writeJson(res, 400, { error: 'source must be slack or discord' });
           return;
         }
 
         if (!body.channelId) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'channelId required' }));
+          writeJson(res, 400, { error: 'channelId required' });
           return;
         }
 
@@ -135,57 +146,37 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
           },
         });
 
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({
+        writeJson(res, 200, {
           accepted: result.accepted,
           reason: result.reason,
           sessionKey: result.sessionKey,
-        }));
+        });
       } catch (error) {
-        res.statusCode = 400;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ error: (error as Error).message }));
+        writeJson(res, 400, { error: (error as Error).message });
       }
       return;
     }
 
     if (req.method === 'POST' && req.url === '/stop') {
-      if (config.CONTROL_AUTH_TOKEN) {
-        const auth = req.headers['authorization'];
-        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
-          unauthorized(res);
-          return;
-        }
-      }
+      if (!requireAuth(req, config, res)) return;
 
       try {
         const body = (await readJsonBody(req)) as { sessionKey?: string };
         if (!body.sessionKey) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'sessionKey required' }));
+          writeJson(res, 400, { error: 'sessionKey required' });
           return;
         }
 
         const ok = await control.stopSession(body.sessionKey);
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ stopped: ok }));
+        writeJson(res, 200, { stopped: ok });
       } catch (error) {
-        res.statusCode = 400;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ error: (error as Error).message }));
+        writeJson(res, 400, { error: (error as Error).message });
       }
       return;
     }
 
     if (req.method === 'POST' && req.url === '/alias') {
-      if (config.CONTROL_AUTH_TOKEN) {
-        const auth = req.headers['authorization'];
-        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
-          unauthorized(res);
-          return;
-        }
-      }
+      if (!requireAuth(req, config, res)) return;
 
       try {
         const body = (await readJsonBody(req)) as {
@@ -195,77 +186,58 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
         };
 
         if (!body.action) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'action required' }));
+          writeJson(res, 400, { error: 'action required' });
           return;
         }
 
         if (body.action === 'list') {
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ aliases: control.listAliases() }));
+          writeJson(res, 200, { aliases: control.listAliases() });
           return;
         }
 
         if (!body.alias || body.alias.trim().length === 0) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'alias required' }));
+          writeJson(res, 400, { error: 'alias required' });
           return;
         }
 
         if (body.action === 'set') {
           if (!body.sessionKey || body.sessionKey.trim().length === 0) {
-            res.statusCode = 400;
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({ error: 'sessionKey required' }));
+            writeJson(res, 400, { error: 'sessionKey required' });
             return;
           }
           await control.setAlias(body.alias, body.sessionKey);
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ alias: body.alias, sessionKey: body.sessionKey }));
+          writeJson(res, 200, { alias: body.alias, sessionKey: body.sessionKey });
           return;
         }
 
         if (body.action === 'unset') {
           const previous = await control.removeAlias(body.alias);
           if (!previous) {
-            res.statusCode = 404;
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({ error: 'alias_not_found' }));
+            writeJson(res, 404, { error: 'alias_not_found' });
             return;
           }
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ alias: body.alias, removed: true }));
+          writeJson(res, 200, { alias: body.alias, removed: true });
           return;
         }
 
         if (body.action === 'resolve') {
           const alias = control.resolveAlias(body.alias);
           if (!alias) {
-            res.statusCode = 404;
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({ error: 'alias_not_found' }));
+            writeJson(res, 404, { error: 'alias_not_found' });
             return;
           }
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ alias: alias.alias, sessionKey: alias.sessionKey }));
+          writeJson(res, 200, { alias: alias.alias, sessionKey: alias.sessionKey });
           return;
         }
 
-        res.statusCode = 400;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ error: 'unsupported action' }));
+        writeJson(res, 400, { error: 'unsupported action' });
       } catch (error) {
-        res.statusCode = 400;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ error: (error as Error).message }));
+        writeJson(res, 400, { error: (error as Error).message });
       }
       return;
     }
 
-    res.statusCode = 404;
-    res.end('not found');
+    writeJson(res, 404, { error: 'not found' });
   });
 
   return new Promise<http.Server>((resolve, reject) => {

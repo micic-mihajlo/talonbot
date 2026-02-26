@@ -43,11 +43,15 @@ const readHttpBody = async <T>(res: http.IncomingMessage): Promise<T> => {
 const requestHttp = <T>(
   port: number,
   route: string,
-  init: { method?: 'GET' | 'POST'; body?: unknown } = {},
+  init: {
+    method?: 'GET' | 'POST';
+    body?: unknown;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<{ statusCode: number; payload: T }> => {
   const method = init.method ?? 'GET';
   return new Promise((resolve, reject) => {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...(init.headers || {}) };
     if (init.body) {
       headers['content-type'] = 'application/json';
     }
@@ -232,6 +236,68 @@ describe('socket control runtime', () => {
       success: false,
       error: 'Unsupported command: ping',
     });
+  });
+});
+
+describe('HTTP control auth gating', () => {
+  let workingDirectory = '';
+  let controlPlane: ControlPlane;
+  let httpServer: http.Server;
+  let httpPort = 0;
+
+  beforeEach(async () => {
+    workingDirectory = await createWorkingDirectory();
+    const socketPath = path.join(workingDirectory, 'control.sock');
+    const secureConfig = buildTestConfig(workingDirectory, socketPath, 0);
+    secureConfig.CONTROL_AUTH_TOKEN = 'super-secret-token';
+
+    controlPlane = new ControlPlane(secureConfig, () => createEngine());
+    await controlPlane.initialize();
+    httpServer = await createHttpServer(controlPlane, secureConfig, 0, undefined as any);
+    httpPort = (httpServer.address() as AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => {
+      httpServer.close(() => resolve());
+    });
+    controlPlane.stop();
+    await rm(workingDirectory, { recursive: true, force: true });
+  });
+
+  it('protects sessions and alias management behind auth token when enabled', async () => {
+    const denied = await requestHttp<{ error: string }>(httpPort, '/sessions');
+    expect(denied.statusCode).toBe(401);
+    expect(denied.payload.error).toBe('unauthorized');
+
+    const allowed = await requestHttp<{ sessions: unknown[] }>(httpPort, '/sessions', {
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(Array.isArray(allowed.payload.sessions)).toBe(true);
+
+    const aliasDenied = await requestHttp<{ error: string }>(httpPort, '/alias', {
+      method: 'POST',
+      body: {
+        action: 'list',
+      },
+    });
+    expect(aliasDenied.statusCode).toBe(401);
+    expect(aliasDenied.payload.error).toBe('unauthorized');
+
+    const aliasAllowed = await requestHttp<{ aliases: unknown[] }>(httpPort, '/alias', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+      body: {
+        action: 'list',
+      },
+    });
+    expect(aliasAllowed.statusCode).toBe(200);
+    expect(Array.isArray(aliasAllowed.payload.aliases)).toBe(true);
   });
 });
 

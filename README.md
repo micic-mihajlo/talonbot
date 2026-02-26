@@ -81,6 +81,15 @@ Enable one transport when you’re ready to connect real chat:
 
 Set `CONTROL_HTTP_PORT` to a non-zero value.
 
+### Startup checks
+
+- `control-plane`: warns if `CONTROL_AUTH_TOKEN` is missing.
+- `engine`: errors if `ENGINE_MODE=process` but `ENGINE_COMMAND` is empty.
+- `storage` / `socket`: validates writable runtime directories.
+- `runtime`: warns if running as root.
+
+Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-like control-plane usage.
+
 - `GET /health`
 - `GET /sessions`
 - `GET /aliases`
