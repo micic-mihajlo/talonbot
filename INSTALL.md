@@ -26,6 +26,13 @@ node dist/index.js
 
 This gives you a running instance on `localhost:8080` with socket control for testing.
 
+Validate the environment before long-lived deployment:
+
+```bash
+npm run doctor
+npm run doctor -- --strict --runtime-url http://localhost:8080 --runtime-token "$CONTROL_AUTH_TOKEN"
+```
+
 ## Linux daemon setup (systemd)
 
 ```bash

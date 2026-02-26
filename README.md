@@ -22,19 +22,20 @@ No Slack/Discord credentials required for this path. Use the built-in mock engin
 
 ```bash
 cd /path/to/talonbot
-./install.sh
-npm run start
+cp .env.example .env
+./install.sh --start
 ```
 
-The service starts immediately and listens on:
+This gives an immediate local control-plane at:
 
 - Unix socket: `${CONTROL_SOCKET_PATH}` (default `~/.local/share/talonbot/control.sock`)
-- HTTP control plane: port `8080` when set via `CONTROL_HTTP_PORT`
+- HTTP control plane: port `8080` (set in `.env`)
 
 If you want it as a long-running VPS service:
 
 ```bash
 cd /path/to/talonbot
+cp .env.example .env
 ./install.sh --daemon
 ```
 
@@ -66,11 +67,18 @@ You should see active sessions appear once messages are received.
 
 ```bash
 curl -s http://localhost:8080/health
+curl -s http://localhost:8080/status
 curl -s http://localhost:8080/sessions
 curl -s -H "Content-Type: application/json" -d '{"source":"discord","channelId":"local","text":"hello bot","senderId":"you"}' http://localhost:8080/dispatch
 ```
 
 You should get an accepted response from `/dispatch` and a reply text in logs/JSON.
+
+Run health/config sanity checks locally with:
+
+```bash
+npm run doctor
+```
 
 Enable one transport when you’re ready to connect real chat:
 
@@ -79,7 +87,7 @@ Enable one transport when you’re ready to connect real chat:
 
 ## Control API
 
-Set `CONTROL_HTTP_PORT` to a non-zero value.
+`CONTROL_HTTP_PORT` can be changed; default is `8080` in the template.
 
 ### Startup checks
 
@@ -91,6 +99,7 @@ Set `CONTROL_HTTP_PORT` to a non-zero value.
 Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-like control-plane usage.
 
 - `GET /health`
+- `GET /status`
 - `GET /sessions`
 - `GET /aliases`
 - `POST /dispatch` or `POST /send`
