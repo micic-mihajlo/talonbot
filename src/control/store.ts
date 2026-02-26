@@ -3,11 +3,13 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { ensureDir, joinSafe } from '../utils/path';
+import type { AliasMap } from './aliases';
 
 const stringify = (value: unknown) => `${JSON.stringify(value)}\n`;
 
 export class SessionStore {
   constructor(private readonly baseDir: string) {}
+  private readonly aliasFile = path.join(this.baseDir, 'aliases.json');
 
   async init() {
     await ensureDir(this.baseDir);
@@ -61,6 +63,25 @@ export class SessionStore {
     } catch {
       return null;
     }
+  }
+
+  async readAliasMap(): Promise<AliasMap> {
+    if (!existsSync(this.aliasFile)) {
+      return {};
+    }
+
+    try {
+      const raw = await fs.readFile(this.aliasFile, { encoding: 'utf8' });
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as AliasMap) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  async writeAliasMap(aliases: AliasMap) {
+    await ensureDir(this.baseDir);
+    await fs.writeFile(this.aliasFile, JSON.stringify(aliases, null, 2), { encoding: 'utf8' });
   }
 
   sanitizeKey(sessionKey: string) {

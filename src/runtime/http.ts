@@ -67,6 +67,20 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/aliases') {
+      if (config.CONTROL_AUTH_TOKEN) {
+        const auth = req.headers['authorization'];
+        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
+          unauthorized(res);
+          return;
+        }
+      }
+
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ aliases: control.listAliases() }));
+      return;
+    }
+
     if (req.method === 'POST' && (req.url === '/dispatch' || req.url === '/send')) {
       if (config.CONTROL_AUTH_TOKEN) {
         const auth = req.headers['authorization'];
@@ -156,6 +170,92 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
         const ok = await control.stopSession(body.sessionKey);
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ stopped: ok }));
+      } catch (error) {
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ error: (error as Error).message }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/alias') {
+      if (config.CONTROL_AUTH_TOKEN) {
+        const auth = req.headers['authorization'];
+        if (auth !== `Bearer ${config.CONTROL_AUTH_TOKEN}`) {
+          unauthorized(res);
+          return;
+        }
+      }
+
+      try {
+        const body = (await readJsonBody(req)) as {
+          action?: 'set' | 'unset' | 'resolve' | 'list';
+          alias?: string;
+          sessionKey?: string;
+        };
+
+        if (!body.action) {
+          res.statusCode = 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'action required' }));
+          return;
+        }
+
+        if (body.action === 'list') {
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ aliases: control.listAliases() }));
+          return;
+        }
+
+        if (!body.alias || body.alias.trim().length === 0) {
+          res.statusCode = 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'alias required' }));
+          return;
+        }
+
+        if (body.action === 'set') {
+          if (!body.sessionKey || body.sessionKey.trim().length === 0) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'sessionKey required' }));
+            return;
+          }
+          await control.setAlias(body.alias, body.sessionKey);
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ alias: body.alias, sessionKey: body.sessionKey }));
+          return;
+        }
+
+        if (body.action === 'unset') {
+          const previous = await control.removeAlias(body.alias);
+          if (!previous) {
+            res.statusCode = 404;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'alias_not_found' }));
+            return;
+          }
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ alias: body.alias, removed: true }));
+          return;
+        }
+
+        if (body.action === 'resolve') {
+          const alias = control.resolveAlias(body.alias);
+          if (!alias) {
+            res.statusCode = 404;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'alias_not_found' }));
+            return;
+          }
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ alias: alias.alias, sessionKey: alias.sessionKey }));
+          return;
+        }
+
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ error: 'unsupported action' }));
       } catch (error) {
         res.statusCode = 400;
         res.setHeader('content-type', 'application/json');

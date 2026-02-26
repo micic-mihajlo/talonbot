@@ -33,6 +33,8 @@ export interface ControlDispatchPayload {
   senderId?: string;
   text: string;
   metadata?: Record<string, string>;
+  sessionKey?: string;
+  alias?: string;
 }
 
 export interface ControlDispatchResult {

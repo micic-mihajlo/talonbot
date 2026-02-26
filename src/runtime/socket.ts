@@ -33,7 +33,35 @@ interface ListCommand {
   action: 'list';
 }
 
-type ControlCommand = SendCommand | StopCommand | HealthCommand | ListCommand;
+interface AliasSetCommand {
+  action: 'alias_set';
+  alias: string;
+  sessionKey: string;
+}
+
+interface AliasUnsetCommand {
+  action: 'alias_unset';
+  alias: string;
+}
+
+interface AliasResolveCommand {
+  action: 'alias_resolve';
+  alias: string;
+}
+
+interface AliasListCommand {
+  action: 'alias_list';
+}
+
+type ControlCommand =
+  | SendCommand
+  | StopCommand
+  | HealthCommand
+  | ListCommand
+  | AliasSetCommand
+  | AliasUnsetCommand
+  | AliasResolveCommand
+  | AliasListCommand;
 
 const parseBody = (chunk: string) => {
   return JSON.parse(chunk) as ControlCommand;
@@ -67,22 +95,61 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
         if (!line.trim()) continue;
 
         try {
-          const command = parseBody(line.trim());
-          if (command.action === 'health') {
-            client.write(JSON.stringify({ healthy: true, sessions: control.listSessions() }) + '\n');
+        const command = parseBody(line.trim());
+        if (command.action === 'health') {
+          client.write(JSON.stringify({ healthy: true, sessions: control.listSessions() }) + '\n');
+          continue;
+        }
+
+        if (command.action === 'alias_list') {
+          client.write(JSON.stringify({ aliases: control.listAliases() }) + '\n');
+          continue;
+        }
+
+        if (command.action === 'alias_resolve') {
+          const alias = control.resolveAlias(command.alias);
+          if (!alias) {
+            client.write(JSON.stringify({ error: 'alias_not_found' }) + '\n');
             continue;
           }
+          client.write(JSON.stringify({ alias: alias.alias, sessionKey: alias.sessionKey }) + '\n');
+          continue;
+        }
+
+        if (command.action === 'alias_set') {
+          if (!command.alias || !command.sessionKey) {
+            client.write(JSON.stringify({ error: 'alias and sessionKey required' }) + '\n');
+            continue;
+          }
+          await control.setAlias(command.alias, command.sessionKey);
+          client.write(JSON.stringify({ alias: command.alias, sessionKey: command.sessionKey }) + '\n');
+          continue;
+        }
+
+        if (command.action === 'alias_unset') {
+          if (!command.alias) {
+            client.write(JSON.stringify({ error: 'alias required' }) + '\n');
+            continue;
+          }
+          const previous = await control.removeAlias(command.alias);
+          if (!previous) {
+            client.write(JSON.stringify({ error: 'alias_not_found' }) + '\n');
+            continue;
+          }
+          client.write(JSON.stringify({ alias: command.alias, removed: true }) + '\n');
+          continue;
+        }
 
           if (command.action === 'list') {
             client.write(JSON.stringify({ sessions: control.listSessions() }) + '\n');
             continue;
           }
 
-          if (command.action === 'stop') {
-            const success = await control.stopSession(command.sessionKey);
-            client.write(JSON.stringify({ stopped: success }) + '\n');
-            continue;
-          }
+        if (command.action === 'stop') {
+          const success = await control.stopSession(command.sessionKey);
+          client.write(JSON.stringify({ stopped: success }) + '\n');
+          continue;
+        }
 
           if (command.action === 'send') {
             const inbound: InboundMessage = {

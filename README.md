@@ -34,8 +34,10 @@ Set `CONTROL_HTTP_PORT` to a non-zero value.
 
 - `GET /health`
 - `GET /sessions`
+- `GET /aliases`
 - `POST /dispatch` or `POST /send`
 - `POST /stop`
+- `POST /alias` with action `set|unset|resolve|list`
 
 Example:
 
@@ -43,6 +45,15 @@ Example:
 curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" \
   -d '{"source":"discord","channelId":"12345","text":"run lint","senderId":"ops"}' \
   http://localhost:8080/dispatch
+
+Alias maintenance:
+
+```bash
+curl -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"set","alias":"feature-chat","sessionKey":"discord:12345:main"}' \
+  http://localhost:8080/alias
+```
 ```
 
 ## Socket control
