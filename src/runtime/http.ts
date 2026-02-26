@@ -271,7 +271,10 @@ export const createHttpServer = (control: ControlPlane, config: AppConfig, port:
   return new Promise<http.Server>((resolve, reject) => {
     server.on('error', reject);
     server.listen(port, () => {
-      logger.info(`HTTP server listening on ${port}`);
+      const address = server.address();
+      const resolvedPort =
+        typeof address === 'string' ? address : address ? address.port : port;
+      logger.info(`HTTP server listening on ${resolvedPort}`);
       resolve(server);
     });
   });
