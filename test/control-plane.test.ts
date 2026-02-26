@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm, mkdir } from 'node:fs/promises';
 
 import { ControlPlane } from '../src/control/daemon.js';
 import { routeFromMessage } from '../src/control/route.js';
@@ -38,18 +38,25 @@ const buildTestConfig = (dataDir: string): AppConfig => ({
   ENGINE_MODE: 'mock',
 });
 
+const createWorkingDirectory = async () => {
+  const workingDirectory = path.join('/tmp', `tb-${Math.random().toString(36).slice(2, 7)}`);
+  await rm(workingDirectory, { force: true, recursive: true });
+  await mkdir(workingDirectory, { recursive: true });
+  return workingDirectory;
+};
+
 describe('control plane alias behavior', () => {
   let workingDirectory = '';
   let controlPlane: ControlPlane;
 
   beforeEach(async () => {
-    workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'talonbot-test-'));
+    workingDirectory = await createWorkingDirectory();
     controlPlane = new ControlPlane(buildTestConfig(workingDirectory), () => createEngine());
     await controlPlane.initialize();
   });
 
   afterEach(async () => {
-    controlPlane.stop();
+    controlPlane?.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -123,7 +130,7 @@ describe('control plane rpc behavior', () => {
   let sessionKey = '';
 
   beforeEach(async () => {
-    workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'talonbot-test-'));
+    workingDirectory = await createWorkingDirectory();
     controlPlane = new ControlPlane(buildTestConfig(workingDirectory), () => createEngine());
     await controlPlane.initialize();
 
@@ -132,7 +139,7 @@ describe('control plane rpc behavior', () => {
   });
 
   afterEach(async () => {
-    controlPlane.stop();
+    controlPlane?.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 

@@ -8,8 +8,13 @@ import type { AliasMap } from './aliases.js';
 const stringify = (value: unknown) => `${JSON.stringify(value)}\n`;
 
 export class SessionStore {
-  constructor(private readonly baseDir: string) {}
-  private readonly aliasFile = path.join(this.baseDir, 'aliases.json');
+  private readonly aliasFile: string;
+  private readonly baseDir: string;
+
+  constructor(baseDir: string) {
+    this.baseDir = baseDir;
+    this.aliasFile = path.join(this.baseDir, 'aliases.json');
+  }
 
   async init() {
     await ensureDir(this.baseDir);
