@@ -112,6 +112,7 @@ Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-
 - `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
 - `GET /repos`, `POST /repos/register`, `POST /repos/remove`
 - `POST /bridge/envelope`, `POST /webhook/github`
+- `GET /bridge/status`
 - `GET /release/status`, `POST /release/update`, `POST /release/rollback`
 - `POST /audit`, `POST /diagnostics/bundle`
 

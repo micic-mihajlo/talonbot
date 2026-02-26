@@ -8,10 +8,22 @@ import { DiscordTransport } from './transports/discord/index.js';
 import { createSocketServer } from './runtime/socket.js';
 import { validateStartupConfig } from './utils/startup.js';
 import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
-import { InboundBridge } from './bridge/inbound-bridge.js';
+import { BridgeSupervisor } from './bridge/supervisor.js';
 import { ReleaseManager } from './ops/release-manager.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
+
+const envelopeToTaskText = (source: string, type: string, payload: unknown) => {
+  if (payload && typeof payload === 'object') {
+    const maybe = payload as { text?: unknown; message?: unknown; action?: unknown; repository?: { full_name?: unknown } };
+    const text = typeof maybe.text === 'string' ? maybe.text : typeof maybe.message === 'string' ? maybe.message : '';
+    const action = typeof maybe.action === 'string' ? maybe.action : '';
+    const repo = typeof maybe.repository?.full_name === 'string' ? maybe.repository.full_name : '';
+    return [source, type, action, repo, text].filter(Boolean).join(' ');
+  }
+
+  return `${source} ${type}`.trim();
+};
 
 const run = async () => {
   const startupIssues = validateStartupConfig(config);
@@ -36,7 +48,26 @@ const run = async () => {
   const taskOrchestrator = new TaskOrchestrator(config);
   await taskOrchestrator.initialize();
 
-  const bridge = new InboundBridge(config.BRIDGE_SHARED_SECRET);
+  const bridge = new BridgeSupervisor({
+    sharedSecret: config.BRIDGE_SHARED_SECRET,
+    stateFile: config.BRIDGE_STATE_FILE,
+    retryBaseMs: config.BRIDGE_RETRY_BASE_MS,
+    retryMaxMs: config.BRIDGE_RETRY_MAX_MS,
+    maxRetries: config.BRIDGE_MAX_RETRIES,
+    onDispatch: async (envelope, metadata) => {
+      if (!config.ENABLE_WEBHOOK_BRIDGE) {
+        throw new Error('bridge_disabled');
+      }
+
+      const text = envelopeToTaskText(envelope.source, envelope.type, envelope.payload);
+      const task = await taskOrchestrator.submitTask({
+        text,
+        repoId: metadata?.repoId,
+      });
+      return { taskId: task.id };
+    },
+  });
+  await bridge.initialize();
   const releaseManager = new ReleaseManager(config.RELEASE_ROOT_DIR);
   await releaseManager.initialize();
 
@@ -81,6 +112,7 @@ const run = async () => {
     );
     runtimeHandles.push({
       close: async () => {
+        bridge.stop();
         await new Promise<void>((resolve, reject) => {
           httpServer.close((error) => {
             if (error) {
@@ -101,6 +133,7 @@ const run = async () => {
 
   const shutdown = async () => {
     logger.info('shutdown signal received');
+    bridge.stop();
     control.stop();
     for (const handle of runtimeHandles) {
       await Promise.resolve(handle.close());

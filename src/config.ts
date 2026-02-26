@@ -51,6 +51,10 @@ const schema = z.object({
   SESSION_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   ENABLE_WEBHOOK_BRIDGE: bool.default(true),
   BRIDGE_SHARED_SECRET: z.string().default(''),
+  BRIDGE_RETRY_BASE_MS: z.coerce.number().int().min(100).max(120000).default(2000),
+  BRIDGE_RETRY_MAX_MS: z.coerce.number().int().min(500).max(600000).default(30000),
+  BRIDGE_MAX_RETRIES: z.coerce.number().int().min(0).max(100).default(5),
+  BRIDGE_STATE_FILE: z.string().default(`${process.env.HOME}/.local/share/talonbot/bridge/state.json`),
 
   SLACK_ENABLED: bool.default(false),
   SLACK_BOT_TOKEN: z.string().default(''),

@@ -7,7 +7,7 @@ import type { ControlDispatchPayload } from '../shared/protocol.js';
 import type { InboundMessage } from '../shared/protocol.js';
 import type { AppConfig } from '../config.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
-import type { InboundBridge } from '../bridge/inbound-bridge.js';
+import type { BridgeSupervisor } from '../bridge/supervisor.js';
 import type { ReleaseManager } from '../ops/release-manager.js';
 import { runSecurityAudit } from '../security/audit.js';
 import { createDiagnosticsBundle } from '../diagnostics/bundle.js';
@@ -15,7 +15,7 @@ import { ensureDir } from '../utils/path.js';
 
 export interface RuntimeServices {
   tasks?: TaskOrchestrator;
-  bridge?: InboundBridge;
+  bridge?: BridgeSupervisor;
   release?: ReleaseManager;
   diagnosticsOutputDir?: string;
 }
@@ -110,39 +110,6 @@ const tryExtractTaskRoute = (pathname: string) => {
   return null;
 };
 
-const envelopeToTaskText = (source: string, type: string, payload: unknown) => {
-  if (source === 'github' && payload && typeof payload === 'object') {
-    const body = payload as {
-      action?: string;
-      repository?: { full_name?: string };
-      pull_request?: { title?: string; html_url?: string };
-      issue?: { title?: string; html_url?: string };
-      head_commit?: { message?: string; url?: string };
-    };
-
-    const repo = body.repository?.full_name || 'unknown/repo';
-    const actionName = body.action || 'event';
-    const prTitle = body.pull_request?.title ? `pr=${body.pull_request.title}` : '';
-    const issueTitle = body.issue?.title ? `issue=${body.issue.title}` : '';
-    const commitMsg = body.head_commit?.message ? `commit=${body.head_commit.message}` : '';
-    const url = body.pull_request?.html_url || body.issue?.html_url || body.head_commit?.url || '';
-
-    return `GitHub ${type} (${actionName}) repo=${repo} ${prTitle} ${issueTitle} ${commitMsg} ${url}`.trim();
-  }
-
-  if (payload && typeof payload === 'object') {
-    const maybe = payload as { text?: unknown; message?: unknown };
-    if (typeof maybe.text === 'string' && maybe.text.trim()) {
-      return `${source}:${type} ${maybe.text.trim()}`;
-    }
-    if (typeof maybe.message === 'string' && maybe.message.trim()) {
-      return `${source}:${type} ${maybe.message.trim()}`;
-    }
-  }
-
-  return `${source}:${type} event received`;
-};
-
 export const createHttpServer = (
   control: ControlPlane,
   config: AppConfig,
@@ -189,6 +156,12 @@ export const createHttpServer = (
           bridge: services?.bridge ? { enabled: true } : { enabled: false },
         },
       };
+      if (services?.bridge) {
+        (body.dependencies as any).bridge = {
+          enabled: true,
+          ...services.bridge.getHealth(),
+        };
+      }
       writeJson(res, 200, body);
       return;
     }
@@ -528,24 +501,12 @@ export const createHttpServer = (
 
       try {
         const body = await readJsonBody(req);
-        const accepted = services.bridge.accept(body, bridgeSignature(req));
-
-        let taskId: string | null = null;
-        if (accepted.status === 'accepted' && accepted.envelope && services.tasks) {
-          const repoIdRaw = (body as { repoId?: unknown }).repoId;
-          const repoId = typeof repoIdRaw === 'string' && repoIdRaw.trim() ? repoIdRaw : undefined;
-          const text = envelopeToTaskText(accepted.envelope.source, accepted.envelope.type, accepted.envelope.payload);
-          const task = await services.tasks.submitTask({
-            text,
-            source: 'webhook',
-            repoId,
-          });
-          taskId = task.id;
-        }
+        const repoIdRaw = (body as { repoId?: unknown }).repoId;
+        const repoId = typeof repoIdRaw === 'string' && repoIdRaw.trim() ? repoIdRaw : undefined;
+        const accepted = await services.bridge.accept(body, bridgeSignature(req), { repoId });
 
         writeJson(res, accepted.ack ? 200 : 401, {
           ...accepted,
-          taskId,
         });
       } catch (error) {
         writeJson(res, 400, { error: (error as Error).message });
@@ -575,24 +536,27 @@ export const createHttpServer = (
         };
 
         const accepted = services.bridge.accept(envelope, bridgeSignature(req));
+        const queued = await accepted;
 
-        let taskId: string | null = null;
-        if (accepted.status === 'accepted' && accepted.envelope && services.tasks) {
-          const text = envelopeToTaskText('github', accepted.envelope.type, accepted.envelope.payload);
-          const task = await services.tasks.submitTask({
-            text,
-            source: 'webhook',
-          });
-          taskId = task.id;
-        }
-
-        writeJson(res, accepted.ack ? 200 : 401, {
-          ...accepted,
-          taskId,
+        writeJson(res, queued.ack ? 200 : 401, {
+          ...queued,
         });
       } catch (error) {
         writeJson(res, 400, { error: (error as Error).message });
       }
+      return;
+    }
+
+    if (pathname === '/bridge/status' && req.method === 'GET') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.bridge) {
+        writeJson(res, 501, { error: 'bridge_not_configured' });
+        return;
+      }
+      writeJson(res, 200, {
+        health: services.bridge.getHealth(),
+        recent: services.bridge.listRecords(100),
+      });
       return;
     }
 

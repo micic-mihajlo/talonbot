@@ -27,6 +27,10 @@
 
 - `SESSION_LOG_RETENTION_DAYS` default: `14`
 - `BRIDGE_SHARED_SECRET` optional, enables signed inbound bridge enforcement
+- `BRIDGE_RETRY_BASE_MS` default: `2000`
+- `BRIDGE_RETRY_MAX_MS` default: `30000`
+- `BRIDGE_MAX_RETRIES` default: `5`
+- `BRIDGE_STATE_FILE` default: `<DATA_DIR>/bridge/state.json`
 
 ## Transport toggles
 
