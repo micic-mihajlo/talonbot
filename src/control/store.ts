@@ -84,6 +84,22 @@ export class SessionStore {
     await fs.writeFile(this.aliasFile, JSON.stringify(aliases, null, 2), { encoding: 'utf8' });
   }
 
+  async clearSessionData(sessionKey: string) {
+    const dir = this.resolvePath(sessionKey);
+    const contextFile = path.join(dir, 'context.jsonl');
+    const logFile = path.join(dir, 'log.jsonl');
+    await this.deleteIfExists(contextFile);
+    await this.deleteIfExists(logFile);
+  }
+
+  async deleteIfExists(filePath: string) {
+    try {
+      await fs.rm(filePath, { recursive: false, force: true });
+    } catch {
+      // ignore
+    }
+  }
+
   sanitizeKey(sessionKey: string) {
     return joinSafe(sessionKey);
   }

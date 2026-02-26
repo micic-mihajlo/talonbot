@@ -4,19 +4,51 @@ import type { AgentEngine } from '../engine/types';
 import type { AppConfig } from '../config';
 import { SessionStore } from './store';
 
+interface SessionTranscriptEntry {
+  role: 'user' | 'assistant';
+  content: string;
+  at: string;
+}
+
+export interface ControlTurnMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
+interface TurnEndEvent {
+  message: ControlTurnMessage | null;
+  turnIndex: number;
+}
+
+type TurnEndListener = (event: TurnEndEvent) => void;
+
 interface SessionState {
   routeKey: string;
   lastActiveAt: string;
   messageCount: number;
+  turnIndex: number;
   lastProcessedMessageId?: string;
+}
+
+const DEFAULT_SUMMARY_PROMPT =
+  `Summarize what happened in this conversation since the last user prompt. ` +
+  'Include decisions, files touched, command outcomes, and blockers.';
+
+function randomId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
 export class AgentSession {
   private readonly queue: SerialQueue;
   private readonly context: string[] = [];
   private readonly seenEventIds = new Map<string, number>();
+  private readonly transcript: SessionTranscriptEntry[] = [];
+  private readonly onTurnEnd?: TurnEndListener;
   private state: SessionState;
   private stopped = false;
+  private currentAbort?: AbortController;
+  private running = false;
 
   constructor(
     private readonly key: string,
@@ -25,7 +57,9 @@ export class AgentSession {
     private readonly store: SessionStore,
     private readonly config: AppConfig,
     private readonly callbacks: RunnerCallbacks,
+    options?: { onTurnEnd?: TurnEndListener },
   ) {
+    this.onTurnEnd = options?.onTurnEnd;
     this.queue = new SerialQueue(
       {
         maxDepth: config.MAX_QUEUE_PER_SESSION,
@@ -40,21 +74,35 @@ export class AgentSession {
       routeKey,
       lastActiveAt: new Date().toISOString(),
       messageCount: 0,
+      turnIndex: 0,
     };
   }
 
   async initialize() {
     const persistedState = await this.store.readSessionState<SessionState>(this.key);
     if (persistedState) {
-      this.state = persistedState;
+      this.state = {
+        ...persistedState,
+        routeKey: this.routeKey,
+      };
     }
 
     const historical = await this.store.readJsonLines(this.key, 'context.jsonl', this.config.SESSION_MAX_MESSAGES);
     const normalized = historical
       .filter(Boolean)
-      .map((entry: any) => `${entry.kind}: ${entry.text}`)
+      .map((entry: any) => ({
+        kind: typeof entry.kind === 'string' ? entry.kind : '',
+        text: typeof entry.text === 'string' ? entry.text : '',
+        at: typeof entry.at === 'string' ? entry.at : new Date().toISOString(),
+      }))
+      .filter((entry) => entry.text && (entry.kind === 'user' || entry.kind === 'assistant'))
       .slice(-this.config.SESSION_MAX_MESSAGES);
-    this.context.push(...normalized);
+
+    normalized.forEach((entry) => {
+      if (entry.kind === 'user' || entry.kind === 'assistant') {
+        this.appendHistory(entry.kind, entry.text, entry.at);
+      }
+    });
 
     if (this.state.lastProcessedMessageId) {
       this.seenEventIds.set(this.state.lastProcessedMessageId, Date.now());
@@ -107,8 +155,30 @@ export class AgentSession {
     }
   }
 
-  async processMessage(event: InboundMessage, normalizedText: string) {
-    this.context.push(`user ${event.senderId}: ${normalizedText}`);
+  private appendHistory(role: 'user' | 'assistant', content: string, at: string) {
+    const text = content.trim();
+    if (!text) {
+      return;
+    }
+
+    this.context.push(`${role}: ${text}`);
+    this.transcript.push({ role, content: text, at });
+
+    while (this.context.length > this.config.SESSION_MAX_MESSAGES) {
+      this.context.shift();
+    }
+
+    while (this.transcript.length > this.config.SESSION_MAX_MESSAGES) {
+      this.transcript.shift();
+    }
+  }
+
+  private async processMessage(event: InboundMessage, normalizedText: string) {
+    this.running = true;
+    const aborter = new AbortController();
+    this.currentAbort = aborter;
+    this.appendHistory('user', normalizedText, new Date(event.receivedAt).toISOString());
+
     const engineInput = {
       sessionKey: this.key,
       route: this.routeKey,
@@ -120,36 +190,207 @@ export class AgentSession {
       recentAttachments: event.attachments.map((attachment) => attachment.url).filter(Boolean) as string[],
     };
 
+    const turnIndex = this.state.turnIndex + 1;
+    this.state.turnIndex = turnIndex;
+
     try {
-      const result = await this.engine.complete(engineInput);
-      this.context.push(`assistant: ${result.text}`);
+      const result = await this.engine.complete(engineInput, aborter.signal);
+      const assistantMessage = {
+        role: 'assistant' as const,
+        content: result.text,
+        timestamp: Date.now(),
+      };
       await this.store.appendLine(this.key, 'context.jsonl', {
         kind: 'assistant',
         text: result.text,
         at: new Date().toISOString(),
       });
+      this.appendHistory('assistant', result.text, new Date().toISOString());
       await this.callbacks.reply(result.text);
-      this.trimContext();
+      this.state.lastActiveAt = new Date().toISOString();
+      this.state.lastProcessedMessageId = event.id;
+      void this.store.writeSessionState(this.key, this.state);
+      this.running = false;
+      this.currentAbort = undefined;
+
+      this.emitTurnEnd({
+        message: assistantMessage,
+        turnIndex,
+      });
     } catch (error) {
-      const fallback = 'I hit an execution error processing your request.';
+      this.running = false;
+      this.currentAbort = undefined;
+
+      if (aborter.signal.aborted) {
+      const fallback = 'Turn was aborted by operator.';
+      this.appendHistory('assistant', fallback, new Date().toISOString());
       await this.callbacks.reply(fallback);
-      this.context.push(`assistant: ${fallback}`);
       await this.store.appendLine(this.key, 'context.jsonl', {
         kind: 'assistant',
         text: fallback,
         at: new Date().toISOString(),
       });
+      this.state.lastActiveAt = new Date().toISOString();
+      this.state.lastProcessedMessageId = event.id;
+      void this.store.writeSessionState(this.key, this.state);
+      this.emitTurnEnd({
+        message: {
+          role: 'assistant',
+          content: fallback,
+          timestamp: Date.now(),
+        },
+        turnIndex,
+      });
+      return;
     }
 
-    this.state.lastActiveAt = new Date().toISOString();
-    this.state.lastProcessedMessageId = event.id;
-    void this.store.writeSessionState(this.key, this.state);
+      const fallback = 'I hit an execution error processing your request.';
+      await this.callbacks.reply(fallback);
+      this.appendHistory('assistant', fallback, new Date().toISOString());
+      await this.store.appendLine(this.key, 'context.jsonl', {
+        kind: 'assistant',
+        text: fallback,
+        at: new Date().toISOString(),
+      });
+      this.state.lastActiveAt = new Date().toISOString();
+      this.state.lastProcessedMessageId = event.id;
+      void this.store.writeSessionState(this.key, this.state);
+      this.emitTurnEnd({
+        message: {
+          role: 'assistant',
+          content: fallback,
+          timestamp: Date.now(),
+        },
+        turnIndex,
+      });
+    }
   }
 
-  private trimContext() {
-    while (this.context.length > this.config.SESSION_MAX_MESSAGES) {
-      this.context.shift();
+  private emitTurnEnd(event: TurnEndEvent) {
+    if (!this.onTurnEnd) return;
+    const emit = {
+      message: event.message,
+      turnIndex: event.turnIndex,
+    };
+    this.onTurnEnd(emit);
+  }
+
+  async getSummary(): Promise<string> {
+    const messages = this.getMessagesSinceLastPrompt();
+    if (messages.length === 0) {
+      throw new Error('No messages to summarize');
     }
+
+    const conversationText = messages
+      .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
+      .join('\n\n');
+
+    const prompt = `${DEFAULT_SUMMARY_PROMPT}\n\n<conversation>\n${conversationText}\n</conversation>`;
+
+    try {
+      const result = await this.engine.complete({
+        sessionKey: this.key,
+        route: this.routeKey,
+        text: prompt,
+        senderId: 'control',
+        metadata: {
+          reason: 'control_summary',
+        },
+        contextLines: [],
+        rawEvent: {
+          id: randomId('summary'),
+          source: 'socket',
+          sourceChannelId: this.routeKey,
+          senderId: 'control',
+          text: prompt,
+          mentionsBot: true,
+          attachments: [],
+          metadata: {},
+          receivedAt: new Date().toISOString(),
+        },
+      });
+      return result.text.trim();
+    } catch (error) {
+      const summary = [
+        `Messages seen: ${messages.length}`,
+        `Last route: ${this.routeKey}`,
+        ...messages.slice(-Math.floor(this.config.SESSION_MAX_MESSAGES / 2)).map((message) => `${message.role}: ${message.content.slice(0, 220)}`),
+      ].join('\n');
+      return `Summary failed; fallback generated:\n${summary}`;
+    }
+  }
+
+  getLastAssistantMessage() {
+    for (let i = this.transcript.length - 1; i >= 0; i -= 1) {
+      const entry = this.transcript[i];
+      if (entry.role === 'assistant') {
+        return {
+          role: entry.role,
+          content: entry.content,
+          timestamp: Date.parse(entry.at) || Date.now(),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  getMessagesSinceLastPrompt() {
+    let fromLastUser = -1;
+    for (let i = this.transcript.length - 1; i >= 0; i -= 1) {
+      if (this.transcript[i].role === 'user') {
+        fromLastUser = i;
+        break;
+      }
+    }
+
+    if (fromLastUser === -1) {
+      return [];
+    }
+
+    const startIndex = fromLastUser;
+    return this.transcript.slice(startIndex).map((entry) => ({
+      role: entry.role,
+      content: entry.content,
+      timestamp: Date.parse(entry.at) || Date.now(),
+    }));
+  }
+
+  async clear(summarize?: boolean) {
+    if (this.running || this.queue.size() > 0) {
+      throw new Error('Session is busy - wait for turn to complete');
+    }
+
+    if (summarize) {
+      throw new Error('Clear with summarization not supported via control RPC - use summarize=false');
+    }
+
+    await this.store.clearSessionData(this.key);
+    this.context.length = 0;
+    this.transcript.length = 0;
+    this.seenEventIds.clear();
+    this.state = {
+      routeKey: this.routeKey,
+      lastActiveAt: new Date().toISOString(),
+      messageCount: 0,
+      turnIndex: 0,
+    };
+    await this.store.writeSessionState(this.key, this.state);
+  }
+
+  async abort() {
+    const hadActiveTask = this.running || this.queue.size() > 0;
+    const hadAbort = !!this.currentAbort;
+    if (this.currentAbort) {
+      this.currentAbort.abort();
+    }
+    this.queue.clear();
+    this.running = false;
+    return hadActiveTask || hadAbort;
+  }
+
+  get routeKeyValue() {
+    return this.routeKey;
   }
 
   get queueSize() {
@@ -160,7 +401,12 @@ export class AgentSession {
     return this.state.lastActiveAt;
   }
 
+  get isIdle() {
+    return !this.running && this.queue.size() === 0;
+  }
+
   stop() {
     this.stopped = true;
+    void this.abort();
   }
 }

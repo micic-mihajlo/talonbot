@@ -20,7 +20,7 @@ export class ProcessEngine implements AgentEngine {
 
   constructor(private readonly command = 'pi', private readonly args = '', private readonly timeoutMs = 120000) {}
 
-  async complete(input: EngineInput): Promise<EngineOutput> {
+  async complete(input: EngineInput, signal?: AbortSignal): Promise<EngineOutput> {
     const payload = JSON.stringify({
       kind: 'agent_turn',
       route: input.route,
@@ -39,6 +39,7 @@ export class ProcessEngine implements AgentEngine {
       windowsHide: true,
       maxBuffer: 1024 * 1024,
       encoding: 'utf8',
+      signal,
       env: {
         ...process.env,
         TALONBOT_SESSION: input.sessionKey,

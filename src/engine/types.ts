@@ -16,6 +16,6 @@ export interface EngineOutput {
 }
 
 export interface AgentEngine {
-  complete(input: EngineInput): Promise<EngineOutput>;
+  complete(input: EngineInput, signal?: AbortSignal): Promise<EngineOutput>;
   ping(): Promise<boolean>;
 }

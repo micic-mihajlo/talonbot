@@ -35,6 +35,10 @@ export class SerialQueue {
     });
   }
 
+  isRunning() {
+    return this.running;
+  }
+
   private async process() {
     if (this.running) return;
     this.running = true;
@@ -55,5 +59,9 @@ export class SerialQueue {
 
   size() {
     return this.queue.length;
+  }
+
+  clear() {
+    this.queue.length = 0;
   }
 }
