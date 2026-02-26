@@ -84,15 +84,25 @@ describe('release snapshot + integrity', () => {
     const sourceDir = path.join(sandbox, 'source');
     await mkdir(sourceDir, { recursive: true });
     await writeFile(path.join(sourceDir, 'file.txt'), 'hello release', 'utf8');
-    await mkdir(path.join(sourceDir, '.git'), { recursive: true });
-    await writeFile(path.join(sourceDir, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+    execFileSync('git', ['init', '-b', 'main'], { cwd: sourceDir, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: sourceDir, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: sourceDir, stdio: 'ignore' });
+    execFileSync('git', ['add', '-A'], { cwd: sourceDir, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'release one'], { cwd: sourceDir, stdio: 'ignore' });
+    const firstExpectedSha = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: sourceDir, encoding: 'utf8' })
+      .trim();
 
     const releases = path.join(sandbox, 'releases-root');
     const manager = new ReleaseManager(releases);
     await manager.initialize();
 
     const snapshot = await manager.createSnapshot(sourceDir);
-    expect(snapshot.sha).toHaveLength(12);
+    expect(snapshot.sha).toBe(firstExpectedSha);
+    expect(snapshot.sourceRevision).toHaveLength(40);
+
+    const repeated = await manager.createSnapshot(sourceDir);
+    expect(repeated.sha).toBe(snapshot.sha);
+    expect(repeated.createdAt).toBe(snapshot.createdAt);
 
     const activePath = await manager.activate(snapshot.sha);
     expect(activePath.endsWith(snapshot.sha)).toBe(true);
@@ -102,6 +112,22 @@ describe('release snapshot + integrity', () => {
 
     const pass = await manager.integrityCheck('strict');
     expect(pass.ok).toBe(true);
+
+    await writeFile(path.join(sourceDir, 'second.txt'), 'second release', 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd: sourceDir, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'release two'], { cwd: sourceDir, stdio: 'ignore' });
+    const secondExpectedSha = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: sourceDir, encoding: 'utf8' })
+      .trim();
+    const second = await manager.createSnapshot(sourceDir);
+    expect(second.sha).toBe(secondExpectedSha);
+
+    await manager.activate(second.sha);
+    const statusAfterSecond = await manager.status();
+    expect(statusAfterSecond.current).toContain(second.sha);
+    expect(statusAfterSecond.previous).toContain(snapshot.sha);
+
+    const rolledBack = await manager.rollback();
+    expect(rolledBack.endsWith(snapshot.sha)).toBe(true);
 
     const activeFile = path.join(activePath, 'file.txt');
     await writeFile(activeFile, 'tampered', 'utf8');

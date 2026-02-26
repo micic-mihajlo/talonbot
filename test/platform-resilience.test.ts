@@ -84,6 +84,7 @@ describe('release manager strict integrity', () => {
     const missingManifest = await manager.integrityCheck('strict');
     expect(missingManifest.ok).toBe(false);
     expect(missingManifest.missing.some((entry) => entry.includes('release-manifest.json'))).toBe(true);
+    await expect(manager.activate(snapshot.sha)).rejects.toThrow('release manifest missing');
   });
 });
 

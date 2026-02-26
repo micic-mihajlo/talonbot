@@ -1,11 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { expandPath } from '../utils/path.js';
 
 export interface ReleaseInfo {
   sha: string;
   sourceDir: string;
+  sourceRevision: string;
   createdAt: string;
   manifestFile: string;
 }
@@ -23,6 +25,12 @@ const hashFile = async (filePath: string) => {
   hash.update(raw);
   return hash.digest('hex');
 };
+
+const exists = async (target: string) =>
+  fs
+    .access(target)
+    .then(() => true)
+    .catch(() => false);
 
 const shouldSkipCopy = (relativePath: string) => {
   if (!relativePath) return false;
@@ -49,41 +57,64 @@ export class ReleaseManager {
 
   async createSnapshot(sourceDir: string) {
     const source = expandPath(sourceDir);
-    const sha = await this.resolveSha(source);
+    const sourceRevision = await this.resolveSourceRevision(source);
+    const sha = sourceRevision ? sourceRevision.slice(0, 12) : await this.resolveFingerprintSha(source);
     const releasePath = path.join(this.releasesDir, sha);
 
-    await fs.rm(releasePath, { recursive: true, force: true });
-    await fs.mkdir(releasePath, { recursive: true });
+    const existing = await this.readReleaseInfo(releasePath);
+    if (existing) {
+      return existing;
+    }
+    if (await exists(releasePath)) {
+      throw new Error(`release ${sha} already exists without release-info metadata`);
+    }
 
-    await fs.cp(source, releasePath, {
-      recursive: true,
-      force: true,
-      filter: (src) => {
-        const rel = path.relative(source, src).replace(/\\/g, '/');
-        return !shouldSkipCopy(rel);
-      },
-    });
+    const stagingPath = path.join(this.releasesDir, `.${sha}.tmp-${process.pid}-${Date.now()}`);
+    await fs.rm(stagingPath, { recursive: true, force: true });
+    await fs.mkdir(stagingPath, { recursive: true });
 
-    const manifest = await this.buildManifest(releasePath);
-    const manifestFile = path.join(releasePath, 'release-manifest.json');
-    await fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2), { encoding: 'utf8' });
+    try {
+      await fs.cp(source, stagingPath, {
+        recursive: true,
+        force: true,
+        filter: (src) => {
+          const rel = path.relative(source, src).replace(/\\/g, '/');
+          return !shouldSkipCopy(rel);
+        },
+      });
 
-    const info: ReleaseInfo = {
-      sha,
-      sourceDir: source,
-      createdAt: new Date().toISOString(),
-      manifestFile,
-    };
+      const manifest = await this.buildManifest(stagingPath);
+      const stagingManifestFile = path.join(stagingPath, 'release-manifest.json');
+      await fs.writeFile(stagingManifestFile, JSON.stringify(manifest, null, 2), { encoding: 'utf8' });
 
-    await fs.writeFile(path.join(releasePath, 'release-info.json'), JSON.stringify(info, null, 2), { encoding: 'utf8' });
-    return info;
+      const info: ReleaseInfo = {
+        sha,
+        sourceDir: source,
+        sourceRevision,
+        createdAt: new Date().toISOString(),
+        manifestFile: path.join(releasePath, 'release-manifest.json'),
+      };
+
+      await fs.writeFile(path.join(stagingPath, 'release-info.json'), JSON.stringify(info, null, 2), { encoding: 'utf8' });
+
+      await fs.rename(stagingPath, releasePath);
+      return info;
+    } catch (error) {
+      await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async activate(sha: string) {
     const target = path.join(this.releasesDir, sha);
     await fs.access(target);
+    await this.verifyRelease(target);
 
     const current = await this.resolveSymlink(this.currentLink);
+    if (current && path.resolve(current) === path.resolve(target)) {
+      return target;
+    }
+
     if (current) {
       await this.swapSymlink(this.previousLink, current);
     }
@@ -98,10 +129,11 @@ export class ReleaseManager {
       if (!previous) {
         throw new Error('no previous release to rollback to');
       }
+      await this.verifyRelease(previous);
 
       const current = await this.resolveSymlink(this.currentLink);
       await this.swapSymlink(this.currentLink, previous);
-      if (current) {
+      if (current && path.resolve(current) !== path.resolve(previous)) {
         await this.swapSymlink(this.previousLink, current);
       }
 
@@ -110,6 +142,7 @@ export class ReleaseManager {
 
     const explicitTarget = path.join(this.releasesDir, target);
     await fs.access(explicitTarget);
+    await this.verifyRelease(explicitTarget);
     await this.activate(target);
     return explicitTarget;
   }
@@ -137,39 +170,17 @@ export class ReleaseManager {
       };
     }
 
-    const manifestPath = path.join(current, 'release-manifest.json');
-    const raw = await fs.readFile(manifestPath, { encoding: 'utf8' }).catch(() => '');
-    if (!raw) {
+    const verification = await this.verifyRelease(current, false);
+    if (!verification) {
       return {
         ok: mode !== 'strict',
         checked: 0,
-        missing: [manifestPath],
+        missing: [path.join(current, 'release-manifest.json')],
         mismatches: [],
       };
     }
 
-    const manifest = JSON.parse(raw) as { files: Record<string, string> };
-    const missing: string[] = [];
-    const mismatches: string[] = [];
-    let checked = 0;
-
-    for (const [relativePath, expectedHash] of Object.entries(manifest.files || {})) {
-      const absolute = path.join(current, relativePath);
-      const exists = await fs
-        .access(absolute)
-        .then(() => true)
-        .catch(() => false);
-      if (!exists) {
-        missing.push(relativePath);
-        continue;
-      }
-
-      checked += 1;
-      const actual = await hashFile(absolute);
-      if (actual !== expectedHash) {
-        mismatches.push(relativePath);
-      }
-    }
+    const { missing, mismatches, checked } = verification;
 
     const ok = missing.length === 0 && mismatches.length === 0;
     return { ok: ok || mode === 'warn', checked, missing, mismatches };
@@ -192,6 +203,7 @@ export class ReleaseManager {
 
     const walk = async (dir: string) => {
       const entries = await fs.readdir(dir, { withFileTypes: true });
+      entries.sort((a, b) => a.name.localeCompare(b.name));
       for (const entry of entries) {
         const absolute = path.join(dir, entry.name);
         const relative = path.relative(releasePath, absolute).replace(/\\/g, '/');
@@ -209,12 +221,42 @@ export class ReleaseManager {
     return { generatedAt: new Date().toISOString(), files };
   }
 
-  private async resolveSha(sourceDir: string) {
-    const now = new Date().toISOString();
+  private async resolveFingerprintSha(sourceDir: string) {
     const hash = crypto.createHash('sha1');
-    hash.update(sourceDir);
-    hash.update(now);
+
+    const walk = async (dir: string) => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const absolute = path.join(dir, entry.name);
+        const relative = path.relative(sourceDir, absolute).replace(/\\/g, '/');
+        if (shouldSkipCopy(relative)) continue;
+        if (entry.isDirectory()) {
+          await walk(absolute);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        hash.update(relative);
+        hash.update(':');
+        hash.update(await hashFile(absolute));
+        hash.update(';');
+      }
+    };
+
+    await walk(sourceDir);
     return hash.digest('hex').slice(0, 12);
+  }
+
+  private async resolveSourceRevision(sourceDir: string) {
+    try {
+      const stdout = execFileSync('git', ['-C', sourceDir, 'rev-parse', '--verify', 'HEAD'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return String(stdout).trim();
+    } catch {
+      return '';
+    }
   }
 
   private async resolveSymlink(linkPath: string) {
@@ -231,5 +273,57 @@ export class ReleaseManager {
     const relativeTarget = path.relative(path.dirname(linkPath), targetPath);
     await fs.symlink(relativeTarget, tmp);
     await fs.rename(tmp, linkPath);
+  }
+
+  private async readReleaseInfo(releasePath: string): Promise<ReleaseInfo | null> {
+    const infoPath = path.join(releasePath, 'release-info.json');
+    const raw = await fs.readFile(infoPath, { encoding: 'utf8' }).catch(() => '');
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as ReleaseInfo;
+      if (!parsed.sha || !parsed.manifestFile) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async verifyRelease(targetPath: string, throwOnFailure = true) {
+    const manifestPath = path.join(targetPath, 'release-manifest.json');
+    const raw = await fs.readFile(manifestPath, { encoding: 'utf8' }).catch(() => '');
+    if (!raw) {
+      if (throwOnFailure) {
+        throw new Error(`release manifest missing: ${manifestPath}`);
+      }
+      return null;
+    }
+
+    const manifest = JSON.parse(raw) as { files: Record<string, string> };
+    const missing: string[] = [];
+    const mismatches: string[] = [];
+    let checked = 0;
+
+    const entries = Object.entries(manifest.files || {}).sort(([a], [b]) => a.localeCompare(b));
+    for (const [relativePath, expectedHash] of entries) {
+      const absolute = path.join(targetPath, relativePath);
+      if (!(await exists(absolute))) {
+        missing.push(relativePath);
+        continue;
+      }
+
+      checked += 1;
+      const actual = await hashFile(absolute);
+      if (actual !== expectedHash) {
+        mismatches.push(relativePath);
+      }
+    }
+
+    if (throwOnFailure && (missing.length > 0 || mismatches.length > 0)) {
+      throw new Error(
+        `release integrity mismatch for ${path.basename(targetPath)} (missing=${missing.length}, mismatches=${mismatches.length})`,
+      );
+    }
+
+    return { missing, mismatches, checked };
   }
 }
