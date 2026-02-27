@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs/promises';
 import type { AgentEngine, EngineInput, EngineOutput } from './types.js';
 import { Logger } from '../utils/logger.js';
+import { expandPath } from '../utils/path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,8 +65,16 @@ const describeExecFailure = (error: unknown): ExecFailureDetails => {
 
 export class ProcessEngine implements AgentEngine {
   private readonly logger = new Logger('engine.process');
+  private readonly cwd: string;
 
-  constructor(private readonly command = 'pi', private readonly args = '', private readonly timeoutMs = 120000) {}
+  constructor(
+    private readonly command = 'pi',
+    private readonly args = '',
+    private readonly timeoutMs = 120000,
+    cwd = '',
+  ) {
+    this.cwd = expandPath(cwd || process.cwd());
+  }
 
   async complete(input: EngineInput, signal?: AbortSignal): Promise<EngineOutput> {
     const payload = JSON.stringify({
@@ -79,10 +89,12 @@ export class ProcessEngine implements AgentEngine {
     });
 
     const [cmd, ...cmdArgs] = splitCommand(this.command, this.args);
+    await fs.mkdir(this.cwd, { recursive: true });
 
     let stdout = '';
     try {
       const result = await execFileAsync(cmd, [...cmdArgs, payload], {
+        cwd: this.cwd,
         timeout: this.timeoutMs,
         windowsHide: true,
         maxBuffer: 1024 * 1024,
@@ -92,6 +104,7 @@ export class ProcessEngine implements AgentEngine {
           ...process.env,
           TALONBOT_SESSION: input.sessionKey,
           TALONBOT_ROUTE: input.route,
+          PWD: this.cwd,
         },
       });
       stdout = result.stdout;
@@ -102,6 +115,7 @@ export class ProcessEngine implements AgentEngine {
         command: cmd,
         args: cmdArgs,
         timeoutMs: this.timeoutMs,
+        cwd: this.cwd,
         payloadBytes: Buffer.byteLength(payload, 'utf8'),
         ...describeExecFailure(error),
       });

@@ -36,6 +36,7 @@ const schema = z.object({
   ENGINE_MODE: z.enum(['process', 'mock']).default('process'),
   ENGINE_COMMAND: z.string().default('pi'),
   ENGINE_ARGS: z.string().default(''),
+  ENGINE_CWD: z.string().default(`${process.env.HOME}/.local/share/talonbot/engine`),
   ENGINE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120000),
 
   REPO_ROOT_DIR: z.string().default(`${process.env.HOME}/workspace`),

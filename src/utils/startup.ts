@@ -26,6 +26,7 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   const expandedSocketDir = path.dirname(config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || ''));
   const expandedWorktreeDir = config.WORKTREE_ROOT_DIR.replace('~', process.env.HOME || '');
   const expandedReleaseDir = config.RELEASE_ROOT_DIR.replace('~', process.env.HOME || '');
+  const expandedEngineDir = config.ENGINE_CWD.replace('~', process.env.HOME || '');
 
   if (!config.CONTROL_AUTH_TOKEN) {
     issues.push({
@@ -107,6 +108,17 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
       area: 'release',
       message: `RELEASE_ROOT_DIR is not writable (${expandedReleaseDir}): ${releaseDirErr}`,
     });
+  }
+
+  if (config.ENGINE_MODE === 'process') {
+    const engineDirErr = ensureDirWritable(expandedEngineDir);
+    if (engineDirErr) {
+      issues.push({
+        severity: 'error',
+        area: 'engine',
+        message: `ENGINE_CWD is not writable (${expandedEngineDir}): ${engineDirErr}`,
+      });
+    }
   }
 
   if (process.getuid?.() === 0) {

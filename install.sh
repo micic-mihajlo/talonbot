@@ -79,6 +79,7 @@ write_env() {
   ENGINE_MODE="$(resolve_env "${ENGINE_MODE:-mock}")"
   ENGINE_COMMAND="$(resolve_env "${ENGINE_COMMAND:-}")"
   ENGINE_ARGS="$(resolve_env "${ENGINE_ARGS:-}")"
+  ENGINE_CWD="$(resolve_env "${ENGINE_CWD:-$DATA_DIR/engine}")"
 
   cat <<EOF > "$ENV_FILE"
 NODE_ENV=production
@@ -97,6 +98,7 @@ MAX_MESSAGE_BYTES=12000
 ENGINE_MODE=$ENGINE_MODE
 ENGINE_COMMAND=$ENGINE_COMMAND
 ENGINE_ARGS=$ENGINE_ARGS
+ENGINE_CWD=$ENGINE_CWD
 ENGINE_TIMEOUT_MS=${ENGINE_TIMEOUT_MS:-120000}
 
 REPO_ROOT_DIR=${REPO_ROOT_DIR:-$run_as_home/workspace}

@@ -6,6 +6,7 @@
 - `CONTROL_HTTP_PORT` default: `8080`
 - `CONTROL_AUTH_TOKEN` required for secured control-plane access
 - `CONTROL_SOCKET_PATH` default: `~/.local/share/talonbot/control.sock`
+- `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
 
 ## Orchestration
 

@@ -8,5 +8,5 @@ export const buildEngine = (config: AppConfig): AgentEngine => {
     return new MockEngine();
   }
 
-  return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS);
+  return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS, config.ENGINE_CWD);
 };
