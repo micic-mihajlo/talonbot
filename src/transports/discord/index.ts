@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, TextChannel, DMChannel, ThreadChannel } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, DMChannel, ThreadChannel } from 'discord.js';
 import type { AppConfig } from '../../config.js';
 import type { ControlPlane } from '../../control/index.js';
 import { createLogger } from '../../utils/logger.js';
@@ -11,6 +11,27 @@ const logger = createLogger('transports.discord', envConfig.LOG_LEVEL as any);
 const stripBotMention = (content: string, botId: string) => {
   const escaped = new RegExp(`<@!?${botId}>`, 'g');
   return content.replace(escaped, '').trim();
+};
+
+const startTypingHeartbeat = (channel: { sendTyping?: () => Promise<unknown> }, enabled: boolean) => {
+  if (!enabled || typeof channel.sendTyping !== 'function') {
+    return () => {};
+  }
+
+  const fire = async () => {
+    try {
+      await channel.sendTyping?.();
+    } catch {
+      // ignore typing failures
+    }
+  };
+
+  void fire();
+  const timer = setInterval(() => {
+    void fire();
+  }, 7000);
+
+  return () => clearInterval(timer);
 };
 
 export class DiscordTransport {
@@ -87,26 +108,57 @@ export class DiscordTransport {
 
       if (!inbound.text) return;
 
-      await this.control.dispatch(inbound, {
-        reply: async (text) => {
-          if (!this.client || !this.client.user) return;
+      if (this.config.DISCORD_REACTIONS_ENABLED) {
+        try {
+          await message.react('👀');
+        } catch {
+          // ignore reaction failures
+        }
+      }
 
-          try {
-            await message.channel.send({ content: text });
-            logger.info(`discord send ok channel=${message.channel.id} messageId=${message.id}`);
-            return;
-          } catch (err) {
-            logger.error('discord send failed', err as unknown);
-          }
+      const stopTyping = startTypingHeartbeat(message.channel as { sendTyping?: () => Promise<unknown> }, this.config.DISCORD_TYPING_ENABLED);
 
+      try {
+        await this.control.dispatch(inbound, {
+          reply: async (text) => {
+            if (!this.client || !this.client.user) return;
+
+            try {
+              await message.channel.send({ content: text });
+              logger.info(`discord send ok channel=${message.channel.id} messageId=${message.id}`);
+              return;
+            } catch (err) {
+              logger.error('discord send failed', err as unknown);
+            }
+
+            try {
+              await message.reply({ content: text });
+              logger.info(`discord reply ok channel=${message.channel.id} messageId=${message.id}`);
+            } catch (err) {
+              logger.error('discord reply fallback failed', err as unknown);
+            }
+          },
+        });
+
+        if (this.config.DISCORD_REACTIONS_ENABLED) {
           try {
-            await message.reply({ content: text });
-            logger.info(`discord reply ok channel=${message.channel.id} messageId=${message.id}`);
-          } catch (err) {
-            logger.error('discord reply fallback failed', err as unknown);
+            await message.react('✅');
+          } catch {
+            // ignore reaction failures
           }
-        },
-      });
+        }
+      } catch (err) {
+        logger.error('discord dispatch failed', err as unknown);
+        if (this.config.DISCORD_REACTIONS_ENABLED) {
+          try {
+            await message.react('⚠️');
+          } catch {
+            // ignore reaction failures
+          }
+        }
+      } finally {
+        stopTyping();
+      }
     });
 
     await this.client.login(this.config.DISCORD_TOKEN);

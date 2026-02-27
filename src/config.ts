@@ -72,6 +72,8 @@ const schema = z.object({
 
   DISCORD_ENABLED: bool.default(false),
   DISCORD_TOKEN: z.string().default(''),
+  DISCORD_TYPING_ENABLED: bool.default(true),
+  DISCORD_REACTIONS_ENABLED: bool.default(true),
   DISCORD_ALLOWED_CHANNELS: z.string().default(''),
   DISCORD_ALLOWED_GUILDS: z.string().default(''),
   DISCORD_ALLOWED_USERS: z.string().default(''),
