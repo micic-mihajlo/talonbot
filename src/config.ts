@@ -33,7 +33,7 @@ const schema = z.object({
   MAX_QUEUE_PER_SESSION: z.coerce.number().int().min(1).max(200).default(16),
   MAX_MESSAGE_BYTES: z.coerce.number().int().min(128).default(12000),
 
-  ENGINE_MODE: z.enum(['process', 'mock']).default('process'),
+  ENGINE_MODE: z.enum(['process', 'mock', 'session']).default('process'),
   ENGINE_COMMAND: z.string().default('pi'),
   ENGINE_ARGS: z.string().default(''),
   ENGINE_CWD: z.string().default(`${process.env.HOME}/.local/share/talonbot/engine`),
