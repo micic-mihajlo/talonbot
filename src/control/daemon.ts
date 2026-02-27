@@ -20,6 +20,7 @@ import type {
 import { buildEngine } from '../engine/index.js';
 import type { AppConfig } from '../config.js';
 import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases.js';
+import { createLogger } from '../utils/logger.js';
 
 export interface DispatchResult {
   accepted: boolean;
@@ -82,6 +83,7 @@ const writeResponse = (socket: net.Socket, response: ControlRpcResponse | Contro
 };
 
 export class ControlPlane {
+  private readonly logger: ReturnType<typeof createLogger>;
   private readonly sessions = new Map<string, SessionLookup>();
   private readonly sessionSockets = new Map<string, SessionSocketState>();
   private readonly turnEndSubscriptions = new Map<string, Set<TurnEndSubscription>>();
@@ -91,6 +93,7 @@ export class ControlPlane {
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly config: AppConfig, private readonly engineFactory = buildEngine) {
+    this.logger = createLogger('control.daemon', config.LOG_LEVEL as any);
     const expandedDataPath = config.DATA_DIR.replace('~', process.env.HOME || '');
     const expandedControlPath = config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || '');
     const controlDir = path.dirname(expandedControlPath);
@@ -114,17 +117,31 @@ export class ControlPlane {
       return this.handleCommand(command, route, callbacks);
     }
 
-    const replyCallback: RunnerCallbacks = {
-      reply: callbacks.reply,
-      replace: async () => {},
-    };
+    return this.dispatchToSession(route.sessionKey, message, callbacks);
+  }
 
-    const session = await this.getOrCreateSession(route.sessionKey, replyCallback);
+  async dispatchToSession(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
+    const normalizedSessionKey = this.resolveSessionReference(sessionKey);
+    if (!normalizedSessionKey) {
+      return {
+        accepted: false,
+        reason: 'sessionKey required',
+      };
+    }
+
+    const session = await this.getOrCreateSession(normalizedSessionKey, this.buildRunnerCallbacks(callbacks));
     await session.session.enqueue(message);
+    this.logger.debug('message enqueued', {
+      sessionKey: normalizedSessionKey,
+      source: message.source,
+      channelId: message.sourceChannelId,
+      threadId: message.sourceThreadId ?? 'main',
+      eventId: message.id,
+    });
     return {
       accepted: true,
       reason: 'enqueued',
-      sessionKey: route.sessionKey,
+      sessionKey: normalizedSessionKey,
     };
   }
 
@@ -247,33 +264,61 @@ export class ControlPlane {
     }
 
     if (command.action === 'stop') {
-      if (!command.sessionKey) {
+      const target = this.resolveSessionReference(command.sessionKey);
+      if (!target) {
         response.accepted = false;
         response.error = 'sessionKey required';
         return response;
       }
-      const stopped = await this.stopSession(command.sessionKey);
+      const stopped = await this.stopSession(target);
       return { stopped };
     }
 
     if (command.action === 'send') {
-      if (!command.source || !command.channelId || !command.text) {
+      const messageText = command.text?.trim();
+      if (!messageText) {
         response.accepted = false;
-        response.error = 'source, channelId and text required';
+        response.error = 'text required';
         return response;
       }
 
-      const source = command.source;
+      const targetSessionKey = this.resolveSessionReference(command.sessionKey || command.alias);
+      if (targetSessionKey) {
+        const sendResponse = await this.handleSessionRpcCommand(targetSessionKey, {
+          type: 'send',
+          id: randomId('legacy-send'),
+          sessionKey: targetSessionKey,
+          message: messageText,
+          mode: command.mode,
+        });
+        if (!sendResponse.success) {
+          response.accepted = false;
+          response.error = sendResponse.error || 'session_dispatch_failed';
+          return response;
+        }
+
+        return {
+          accepted: true,
+          sessionKey: targetSessionKey,
+        };
+      }
+
+      if (!command.source || !command.channelId) {
+        response.accepted = false;
+        response.error = 'source and channelId required when sessionKey or alias are not provided';
+        return response;
+      }
+
       const message: InboundMessage = {
         id: randomId('socket'),
-        source,
+        source: command.source,
         sourceChannelId: command.channelId,
         sourceThreadId: command.threadId,
         sourceMessageId: randomId('msg'),
         senderId: command.senderId || 'socket',
         senderName: 'socket',
         senderIsBot: false,
-        text: command.text,
+        text: messageText,
         mentionsBot: true,
         attachments: [],
         metadata: command.metadata || {},
@@ -281,19 +326,11 @@ export class ControlPlane {
       };
 
       const route = routeFromMessage(message);
-      const session = await this.getOrCreateSession(route.sessionKey, {
-        reply: async () => {},
-        replace: async () => {},
-      });
-      await session.session.enqueue(message);
-      return {
-        accepted: true,
-        sessionKey: route.sessionKey,
-      };
+      return this.dispatchToSession(route.sessionKey, message, { reply: async () => {} });
     }
 
     if (command.action === 'get_message') {
-      const target = command.sessionKey;
+      const target = this.resolveSessionReference(command.sessionKey);
       if (!target) {
         response.accepted = false;
         response.error = 'sessionKey required';
@@ -312,7 +349,7 @@ export class ControlPlane {
     }
 
     if (command.action === 'get_summary') {
-      const target = command.sessionKey;
+      const target = this.resolveSessionReference(command.sessionKey);
       if (!target) {
         response.accepted = false;
         response.error = 'sessionKey required';
@@ -338,7 +375,7 @@ export class ControlPlane {
     }
 
     if (command.action === 'clear') {
-      const target = command.sessionKey;
+      const target = this.resolveSessionReference(command.sessionKey);
       if (!target) {
         response.accepted = false;
         response.error = 'sessionKey required';
@@ -361,7 +398,7 @@ export class ControlPlane {
     }
 
     if (command.action === 'abort') {
-      const target = command.sessionKey;
+      const target = this.resolveSessionReference(command.sessionKey);
       if (!target) {
         response.accepted = false;
         response.error = 'sessionKey required';
@@ -399,35 +436,45 @@ export class ControlPlane {
       id,
     });
 
-    if (!sessionKey) {
+    const commandSessionKey =
+      'sessionKey' in command && typeof command.sessionKey === 'string' ? command.sessionKey : undefined;
+    const resolvedSessionKey = this.resolveSessionReference(commandSessionKey || sessionKey);
+    if (!resolvedSessionKey) {
       return result(false, command.type, undefined, 'sessionKey required');
     }
 
-    const session = await this.getOrCreateSession(sessionKey, {
-      reply: async () => {},
-      replace: async () => {},
-    });
+    const shouldCreateSession = command.type === 'send' || command.type === 'subscribe';
+    const session = shouldCreateSession
+      ? await this.getOrCreateSession(resolvedSessionKey, {
+          reply: async () => {},
+          replace: async () => {},
+        })
+      : this.sessions.get(resolvedSessionKey);
+
+    if (!session) {
+      return result(false, command.type, undefined, 'session_not_found');
+    }
 
     if (command.type === 'subscribe') {
       if (command.event !== 'turn_end') {
-        return result(false, 'subscribe', undefined, `Unknown event type: ${command.event}`);
+        return result(false, 'subscribe', undefined, `Unknown event type: ${command.event}. Supported: turn_end`);
       }
 
       const subscriptionId = command.id ?? `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      let subs = this.turnEndSubscriptions.get(sessionKey);
+      let subs = this.turnEndSubscriptions.get(resolvedSessionKey);
       if (!subs) {
         subs = new Set<TurnEndSubscription>();
-        this.turnEndSubscriptions.set(sessionKey, subs);
+        this.turnEndSubscriptions.set(resolvedSessionKey, subs);
       }
 
       if (socket) {
         const sub: TurnEndSubscription = { socket, subscriptionId };
         subs.add(sub);
         const cleanup = () => {
-          const current = this.turnEndSubscriptions.get(sessionKey);
+          const current = this.turnEndSubscriptions.get(resolvedSessionKey);
           current?.delete(sub);
           if (!current || current.size === 0) {
-            this.turnEndSubscriptions.delete(sessionKey);
+            this.turnEndSubscriptions.delete(resolvedSessionKey);
           }
         };
         socket.once('close', cleanup);
@@ -439,13 +486,13 @@ export class ControlPlane {
     if (command.type === 'send') {
       const messageText = command.message;
       if (typeof messageText !== 'string' || !messageText.trim().length) {
-        return result(false, 'send', undefined, 'Missing message');
+        return result(false, 'send', undefined, 'message must be a non-empty string');
       }
 
       const inbound: InboundMessage = {
         id: randomId('session-send'),
         source: 'socket',
-        sourceChannelId: sessionKey,
+        sourceChannelId: resolvedSessionKey,
         sourceMessageId: randomId('msg'),
         senderId: 'operator',
         senderName: 'operator',
@@ -458,12 +505,17 @@ export class ControlPlane {
         },
         receivedAt: new Date().toISOString(),
       };
-      await session.session.enqueue(inbound);
-      const mode = session.session.isIdle ? 'direct' : command.mode || 'steer';
-      return result(true, 'send', {
-        delivered: true,
-        mode,
-      });
+      const wasIdle = session.session.isIdle;
+      try {
+        await session.session.enqueue(inbound);
+        const mode = wasIdle ? 'direct' : command.mode || 'steer';
+        return result(true, 'send', {
+          delivered: true,
+          mode,
+        });
+      } catch (error) {
+        return result(false, 'send', undefined, error instanceof Error ? error.message : 'session_dispatch_failed');
+      }
     }
 
     if (command.type === 'get_message') {
@@ -670,14 +722,25 @@ export class ControlPlane {
     };
   }
 
-  private resolveTargetSession(reference: string | undefined, fallback: string) {
+  private buildRunnerCallbacks(callbacks: RunnerContext): RunnerCallbacks {
+    return {
+      reply: callbacks.reply,
+      replace: async () => {},
+    };
+  }
+
+  resolveSessionReference(reference: string | undefined | null): string | null {
     const target = (reference || '').trim();
     if (!target) {
-      return fallback;
+      return null;
     }
 
     const alias = this.resolveAlias(target);
     return alias ? alias.sessionKey : target;
+  }
+
+  private resolveTargetSession(reference: string | undefined, fallback: string) {
+    return this.resolveSessionReference(reference) || fallback;
   }
 
   private async ensureControlDirectory() {
@@ -705,17 +768,19 @@ export class ControlPlane {
       throw new Error('invalid_alias');
     }
 
+    const targetSessionKey = this.resolveSessionReference(sessionKey) || sessionKey;
     this.aliases[normalizedAlias] = {
       alias: normalizedAlias,
-      sessionKey,
+      sessionKey: targetSessionKey,
       createdAt: new Date().toISOString(),
     };
 
     await this.persistAliases();
-    const socketState = this.sessionSockets.get(sessionKey);
+    const socketState = this.sessionSockets.get(targetSessionKey);
     if (socketState) {
       await this.createAliasSymlink(normalizedAlias, socketState.socketPath);
     }
+    this.logger.info('alias_set', { alias: normalizedAlias, sessionKey: targetSessionKey });
   }
 
   async removeAlias(alias: string) {
@@ -727,6 +792,7 @@ export class ControlPlane {
     delete this.aliases[normalizedAlias];
     await this.persistAliases();
     await this.removeAliasSymlink(normalizedAlias);
+    this.logger.info('alias_removed', { alias: normalizedAlias, sessionKey: existing.sessionKey });
     return existing;
   }
 

@@ -220,23 +220,47 @@ export const createHttpServer = (
           return;
         }
 
-        if (!body.source || (body.source !== 'slack' && body.source !== 'discord')) {
-          writeJson(res, 400, { error: 'source must be slack or discord' });
-          return;
-        }
-
-        if (!body.channelId) {
-          writeJson(res, 400, { error: 'channelId required' });
-          return;
-        }
-
         const requestedSessionKey = typeof body.sessionKey === 'string' ? body.sessionKey.trim() : '';
         const requestedAlias = typeof body.alias === 'string' ? body.alias.trim() : '';
+        if (requestedAlias && requestedSessionKey) {
+          writeJson(res, 400, { error: 'provide either alias or sessionKey, not both' });
+          return;
+        }
+
+        const source = body.source;
+        if (source && source !== 'slack' && source !== 'discord' && source !== 'socket') {
+          writeJson(res, 400, { error: 'source must be slack, discord, or socket' });
+          return;
+        }
+
+        let targetSessionKey = '';
+        if (requestedAlias) {
+          const alias = control.resolveAlias(requestedAlias);
+          if (!alias) {
+            writeJson(res, 404, { error: 'alias_not_found', alias: requestedAlias });
+            return;
+          }
+          targetSessionKey = alias.sessionKey;
+        } else if (requestedSessionKey) {
+          targetSessionKey = control.resolveSessionReference(requestedSessionKey) || requestedSessionKey;
+        }
+
+        const inboundSource = source || (targetSessionKey ? 'socket' : undefined);
+        if (!inboundSource) {
+          writeJson(res, 400, { error: 'source required when sessionKey/alias is not provided' });
+          return;
+        }
+
+        const inboundChannelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
+        if (!inboundChannelId && !targetSessionKey) {
+          writeJson(res, 400, { error: 'channelId required when sessionKey/alias is not provided' });
+          return;
+        }
 
         const inbound: InboundMessage = {
           id: randomId(),
-          source: body.source,
-          sourceChannelId: body.channelId,
+          source: inboundSource,
+          sourceChannelId: inboundChannelId || targetSessionKey,
           sourceThreadId: body.threadId,
           sourceMessageId: randomId(),
           senderId: body.senderId || body.userId || 'control',
@@ -249,31 +273,17 @@ export const createHttpServer = (
           receivedAt: new Date().toISOString(),
         };
 
-        let targetSessionKey = '';
-        if (requestedAlias) {
-          const alias = control.resolveAlias(requestedAlias);
-          if (!alias) {
-            writeJson(res, 404, { error: 'alias_not_found' });
-            return;
-          }
-          targetSessionKey = alias.sessionKey;
-        } else if (requestedSessionKey) {
-          targetSessionKey = requestedSessionKey;
-        }
-
         if (targetSessionKey) {
-          const response = await control.handleSessionRpcCommand(targetSessionKey, {
-            type: 'send',
-            id: randomId(),
-            sessionKey: targetSessionKey,
-            message: inbound.text,
-            mode: 'follow_up',
+          const routed = await control.dispatchToSession(targetSessionKey, inbound, {
+            reply: async () => {
+              // reply is intentionally dropped for API dispatches
+            },
           });
 
-          if (!response.success) {
+          if (!routed.accepted) {
             writeJson(res, 400, {
               accepted: false,
-              reason: response.error || 'session_dispatch_failed',
+              reason: routed.reason || 'session_dispatch_failed',
               sessionKey: targetSessionKey,
             });
             return;
@@ -283,6 +293,11 @@ export const createHttpServer = (
             accepted: true,
             reason: 'enqueued',
             sessionKey: targetSessionKey,
+          });
+          logger.info('dispatch routed to session', {
+            sessionKey: targetSessionKey,
+            source: inbound.source,
+            senderId: inbound.senderId,
           });
           return;
         }
@@ -297,6 +312,12 @@ export const createHttpServer = (
           accepted: result.accepted,
           reason: result.reason,
           sessionKey: result.sessionKey,
+        });
+        logger.info('dispatch accepted', {
+          sessionKey: result.sessionKey,
+          source: inbound.source,
+          channelId: inbound.sourceChannelId,
+          senderId: inbound.senderId,
         });
       } catch (error) {
         writeJson(res, 400, { error: (error as Error).message });
@@ -314,8 +335,14 @@ export const createHttpServer = (
           return;
         }
 
-        const ok = await control.stopSession(body.sessionKey);
-        writeJson(res, 200, { stopped: ok });
+        const target = control.resolveSessionReference(body.sessionKey);
+        if (!target) {
+          writeJson(res, 400, { error: 'sessionKey required' });
+          return;
+        }
+
+        const ok = await control.stopSession(target);
+        writeJson(res, 200, { stopped: ok, sessionKey: target });
       } catch (error) {
         writeJson(res, 400, { error: (error as Error).message });
       }
@@ -352,8 +379,17 @@ export const createHttpServer = (
             writeJson(res, 400, { error: 'sessionKey required' });
             return;
           }
-          await control.setAlias(body.alias, body.sessionKey);
-          writeJson(res, 200, { alias: body.alias, sessionKey: body.sessionKey });
+          const targetSessionKey = control.resolveSessionReference(body.sessionKey) || body.sessionKey.trim();
+          try {
+            await control.setAlias(body.alias, targetSessionKey);
+          } catch (error) {
+            if (error instanceof Error && error.message === 'invalid_alias') {
+              writeJson(res, 400, { error: 'alias must be 1-64 chars: letters, numbers, . _ -' });
+              return;
+            }
+            throw error;
+          }
+          writeJson(res, 200, { alias: body.alias, sessionKey: targetSessionKey });
           return;
         }
 

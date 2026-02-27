@@ -183,6 +183,38 @@ describe('HTTP control runtime', () => {
     expect(aliasDispatch.payload.accepted).toBe(true);
     expect(aliasDispatch.payload.sessionKey).toBe(sessionKey);
 
+    const targetedDispatch = await requestHttp<{ accepted: boolean; sessionKey?: string }>(httpPort, '/dispatch', {
+      method: 'POST',
+      body: {
+        text: 'follow-up via session key only',
+        sessionKey: 'team',
+      },
+    });
+    expect(targetedDispatch.statusCode).toBe(200);
+    expect(targetedDispatch.payload.accepted).toBe(true);
+    expect(targetedDispatch.payload.sessionKey).toBe(sessionKey);
+
+    const badTarget = await requestHttp<{ error: string }>(httpPort, '/dispatch', {
+      method: 'POST',
+      body: {
+        text: 'ambiguous',
+        alias: 'team',
+        sessionKey,
+      },
+    });
+    expect(badTarget.statusCode).toBe(400);
+    expect(badTarget.payload.error).toContain('either alias or sessionKey');
+
+    const stopByAlias = await requestHttp<{ stopped: boolean; sessionKey: string }>(httpPort, '/stop', {
+      method: 'POST',
+      body: {
+        sessionKey: 'team',
+      },
+    });
+    expect(stopByAlias.statusCode).toBe(200);
+    expect(stopByAlias.payload.stopped).toBe(true);
+    expect(stopByAlias.payload.sessionKey).toBe(sessionKey);
+
     const aliasRemove = await requestHttp<{ removed: boolean; alias: string }>(httpPort, '/alias', {
       method: 'POST',
       body: {
@@ -287,6 +319,41 @@ describe('socket control runtime', () => {
       command: 'ping',
       success: false,
       error: 'Unsupported command: ping',
+    });
+  });
+
+  it('routes legacy send using alias-backed session targets', async () => {
+    const sessionKey = 'discord:engineering:main';
+    const seed = await sendSocket(socketPathFrom(workingDirectory), {
+      type: 'send',
+      id: 'seed-1',
+      sessionKey,
+      message: 'seed',
+    });
+    expect(seed).toMatchObject({
+      type: 'response',
+      command: 'send',
+      success: true,
+    });
+
+    const aliasSet = await sendSocket(socketPathFrom(workingDirectory), {
+      action: 'alias_set',
+      alias: 'ops',
+      sessionKey,
+    });
+    expect(aliasSet).toMatchObject({
+      alias: 'ops',
+      sessionKey,
+    });
+
+    const legacySend = await sendSocket(socketPathFrom(workingDirectory), {
+      action: 'send',
+      sessionKey: 'ops',
+      text: 'legacy follow-up',
+    });
+    expect(legacySend).toMatchObject({
+      accepted: true,
+      sessionKey,
     });
   });
 });

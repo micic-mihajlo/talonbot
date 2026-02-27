@@ -122,6 +122,23 @@ describe('control plane alias behavior', () => {
 
     expect(dedupeReplies).toHaveLength(1);
   });
+
+  it('resolves aliases when stopping from legacy socket commands', async () => {
+    const seedMessage = mkInboundMessage('seed');
+    const route = routeFromMessage(seedMessage);
+    await controlPlane.dispatch(seedMessage, {
+      reply: async () => {},
+    });
+
+    await controlPlane.setAlias('ops', route.sessionKey);
+    const stopResult = await controlPlane.handleLegacySocketCommand({
+      action: 'stop',
+      sessionKey: 'ops',
+    });
+
+    expect(stopResult).toMatchObject({ stopped: true });
+    expect(controlPlane.listSessions().length).toBe(0);
+  });
 });
 
 describe('control plane rpc behavior', () => {
@@ -239,6 +256,20 @@ describe('control plane rpc behavior', () => {
       command: 'ping',
       success: false,
       error: 'Unsupported command: ping',
+    });
+  });
+
+  it('returns session_not_found for read-only rpc commands on unknown sessions', async () => {
+    const missing = await controlPlane.handleSessionRpcCommand('socket:missing:main', {
+      type: 'get_message',
+      id: 'missing-1',
+    });
+    expect(missing).toMatchObject({
+      type: 'response',
+      command: 'get_message',
+      success: false,
+      error: 'session_not_found',
+      id: 'missing-1',
     });
   });
 });

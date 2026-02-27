@@ -5,11 +5,9 @@ import { createLogger } from '../utils/logger.js';
 import { ControlPlane } from '../control/index.js';
 import type { AppConfig } from '../config.js';
 import { expandPath } from '../utils/path.js';
-import { randomUUID } from 'node:crypto';
 import type {
   ControlRpcEvent,
   ControlRpcResponse,
-  InboundMessage,
 } from '../shared/protocol.js';
 import type { Socket } from 'node:net';
 
@@ -80,7 +78,7 @@ const waitForSocketServerListen = (server: net.Server, socketPath: string) =>
     }
   });
 
-const writeResponse = (socket: Socket, response: ControlRpcResponse | ControlRpcEvent | Record<string, unknown>) => {
+const writeResponse = (socket: Socket, response: ControlRpcResponse | ControlRpcEvent | unknown) => {
   try {
     socket.write(`${JSON.stringify(response)}\n`);
   } catch {
@@ -89,17 +87,7 @@ const writeResponse = (socket: Socket, response: ControlRpcResponse | ControlRpc
 };
 
 const resolveSessionKey = (control: ControlPlane, sessionKey?: string) => {
-  if (!sessionKey) {
-    return undefined;
-  }
-
-  const trimmed = sessionKey.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const alias = control.resolveAlias(trimmed);
-  return alias?.sessionKey ?? trimmed;
+  return control.resolveSessionReference(sessionKey);
 };
 
 const respondParseError = (socket: Socket, message: string, command?: string, id?: string) => {
@@ -112,7 +100,16 @@ const respondParseError = (socket: Socket, message: string, command?: string, id
   });
 };
 
-const randomId = () => `socket-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const respondCommandError = (socket: Socket, command: string, message: string, id?: string) => {
+  writeResponse(socket, {
+    type: 'response',
+    command,
+    success: false,
+    error: message,
+    id,
+  });
+};
+
 const MAX_CONTROL_PAYLOAD_BYTES = 1_000_000;
 
 export interface SocketServerHandle {
@@ -156,86 +153,74 @@ export const createSocketServer = async (
           continue;
         }
 
+        let payload: unknown;
         try {
-          const payload = JSON.parse(line.trim()) as unknown;
-          const rpcCommand = control.parseControlRpc(payload);
-
-          if (rpcCommand) {
-            const resolvedSessionKey = resolveSessionKey(control, rpcCommand.sessionKey);
-            if (!resolvedSessionKey) {
-              const id = 'id' in rpcCommand && typeof rpcCommand.id === 'string' ? rpcCommand.id : undefined;
-              writeResponse(client, {
-                type: 'response',
-                command: rpcCommand.type,
-                success: false,
-                error: 'sessionKey required',
-                id,
-              });
-              continue;
-            }
-
-            rpcCommand.sessionKey = resolvedSessionKey;
-            const response = await control.handleSessionRpcCommand(resolvedSessionKey, rpcCommand, client);
-            writeResponse(client, response);
-            continue;
-          }
-
-          const legacyCommand = control.parseLegacyCommand(payload);
-          if (legacyCommand) {
-            if (legacyCommand.action === 'send') {
-              if (!legacyCommand.source || !legacyCommand.channelId || !legacyCommand.text) {
-                writeResponse(client, { accepted: false, error: 'source, channelId and text required' });
-                continue;
-              }
-
-              const inbound: InboundMessage = {
-                id: randomId(),
-                source: legacyCommand.source,
-                sourceChannelId: legacyCommand.channelId,
-                sourceThreadId: legacyCommand.threadId,
-                senderId: legacyCommand.senderId || 'socket',
-                senderName: 'socket',
-                senderIsBot: false,
-                text: legacyCommand.text,
-                mentionsBot: true,
-                attachments: [],
-                metadata: legacyCommand.metadata || {},
-                receivedAt: new Date().toISOString(),
-              };
-
-              const result = await control.dispatch(inbound, {
-                reply: async () => {},
-              });
-
-              writeResponse(client, { accepted: result.accepted, reason: result.reason, sessionKey: result.sessionKey });
-              continue;
-            }
-
-            const resolved = await control.handleLegacySocketCommand(legacyCommand);
-            writeResponse(client, resolved);
-            continue;
-          }
-
-          if (payload && typeof payload === 'object' && 'type' in payload) {
-            const parsedType = (payload as { type?: unknown }).type;
-            if (typeof parsedType !== 'string') {
-              respondParseError(client, 'Failed to parse command: Missing command type');
-              continue;
-            }
-          }
-          if (payload && typeof payload === 'object' && !('type' in payload)) {
-            respondParseError(
-              client,
-              'Failed to parse command: Missing command type',
-            );
-            continue;
-          }
-
-          respondParseError(client, 'Failed to parse command');
+          payload = JSON.parse(line.trim()) as unknown;
         } catch (error) {
           respondParseError(client, `Failed to parse command: ${(error as Error).message}`);
           continue;
         }
+
+        const rpcCommand = control.parseControlRpc(payload);
+
+        if (rpcCommand) {
+          const resolvedSessionKey = resolveSessionKey(control, rpcCommand.sessionKey);
+          if (!resolvedSessionKey) {
+            const id = 'id' in rpcCommand && typeof rpcCommand.id === 'string' ? rpcCommand.id : undefined;
+            respondCommandError(client, rpcCommand.type, 'sessionKey required', id);
+            continue;
+          }
+
+          rpcCommand.sessionKey = resolvedSessionKey;
+          try {
+            const response = await control.handleSessionRpcCommand(resolvedSessionKey, rpcCommand, client);
+            writeResponse(client, response);
+          } catch (error) {
+            const id = 'id' in rpcCommand && typeof rpcCommand.id === 'string' ? rpcCommand.id : undefined;
+            respondCommandError(client, rpcCommand.type, error instanceof Error ? error.message : 'command_failed', id);
+            logger.error('socket rpc command failed', {
+              command: rpcCommand.type,
+              sessionKey: resolvedSessionKey,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          continue;
+        }
+
+        const legacyCommand = control.parseLegacyCommand(payload);
+        if (legacyCommand) {
+          try {
+            const resolved = await control.handleLegacySocketCommand(legacyCommand);
+            writeResponse(client, resolved);
+          } catch (error) {
+            writeResponse(client, {
+              accepted: false,
+              error: error instanceof Error ? error.message : 'legacy_command_failed',
+            });
+            logger.error('legacy socket command failed', {
+              action: legacyCommand.action,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          continue;
+        }
+
+        if (payload && typeof payload === 'object' && 'type' in payload) {
+          const parsedType = (payload as { type?: unknown }).type;
+          if (typeof parsedType !== 'string') {
+            respondParseError(client, 'Failed to parse command: Missing command type');
+            continue;
+          }
+        }
+        if (payload && typeof payload === 'object' && !('type' in payload)) {
+          respondParseError(
+            client,
+            'Failed to parse command: Missing command type',
+          );
+          continue;
+        }
+
+        respondParseError(client, 'Failed to parse command');
       }
     });
 
