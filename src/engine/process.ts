@@ -34,18 +34,48 @@ export class ProcessEngine implements AgentEngine {
 
     const [cmd, ...cmdArgs] = splitCommand(this.command, this.args);
 
-    const { stdout } = await execFileAsync(cmd, [...cmdArgs, payload], {
-      timeout: this.timeoutMs,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024,
-      encoding: 'utf8',
-      signal,
-      env: {
-        ...process.env,
-        TALONBOT_SESSION: input.sessionKey,
-        TALONBOT_ROUTE: input.route,
-      },
-    });
+    let stdout = '';
+
+    try {
+      const result = await execFileAsync(cmd, [...cmdArgs, payload], {
+        timeout: this.timeoutMs,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        encoding: 'utf8',
+        signal,
+        env: {
+          ...process.env,
+          TALONBOT_SESSION: input.sessionKey,
+          TALONBOT_ROUTE: input.route,
+        },
+      });
+      stdout = result.stdout;
+    } catch (error) {
+      const err = error as Error & {
+        code?: string | number;
+        signal?: string;
+        killed?: boolean;
+        stdout?: string;
+        stderr?: string;
+        cmd?: string;
+      };
+
+      this.logger.error('engine process invocation failed', {
+        sessionKey: input.sessionKey,
+        route: input.route,
+        command: cmd,
+        args: cmdArgs,
+        timeoutMs: this.timeoutMs,
+        code: err.code,
+        signal: err.signal,
+        killed: err.killed,
+        cmdline: err.cmd,
+        stderr: (err.stderr || '').toString().slice(0, 4000),
+        stdout: (err.stdout || '').toString().slice(0, 1000),
+        message: err.message,
+      });
+      throw error;
+    }
 
     const output = stdout.trim();
     if (!output) {

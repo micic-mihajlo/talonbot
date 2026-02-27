@@ -3,6 +3,7 @@ import type { RunnerCallbacks, InboundMessage } from '../shared/protocol.js';
 import type { AgentEngine } from '../engine/types.js';
 import type { AppConfig } from '../config.js';
 import { SessionStore } from './store.js';
+import { createLogger } from '../utils/logger.js';
 
 interface SessionTranscriptEntry {
   role: 'user' | 'assistant';
@@ -40,6 +41,7 @@ function randomId(prefix: string) {
 }
 
 export class AgentSession {
+  private readonly logger = createLogger('control.session', 'info');
   private readonly queue: SerialQueue;
   private readonly context: string[] = [];
   private readonly seenEventIds = new Map<string, number>();
@@ -220,6 +222,16 @@ export class AgentSession {
     } catch (error) {
       this.running = false;
       this.currentAbort = undefined;
+
+      const err = error as Error;
+      this.logger.error('turn execution failed', {
+        sessionKey: this.key,
+        routeKey: this.routeKey,
+        eventId: event.id,
+        aborted: aborter.signal.aborted,
+        message: err?.message,
+        stack: err?.stack,
+      });
 
       if (aborter.signal.aborted) {
       const fallback = 'Turn was aborted by operator.';
