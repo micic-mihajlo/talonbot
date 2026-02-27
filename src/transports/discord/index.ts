@@ -89,26 +89,21 @@ export class DiscordTransport {
 
       await this.control.dispatch(inbound, {
         reply: async (text) => {
-          if (!this.client) return;
-          if (!this.client.user) return;
+          if (!this.client || !this.client.user) return;
 
-          if (message.channel instanceof DMChannel) {
-            await message.channel.send(text);
+          try {
+            await message.channel.send({ content: text });
+            logger.info(`discord send ok channel=${message.channel.id} messageId=${message.id}`);
             return;
+          } catch (err) {
+            logger.error('discord send failed', err as unknown);
           }
 
           try {
-            const isThread = message.channel.isThread();
-            if (isThread) {
-              await message.channel.send({ content: text });
-            } else {
-              await message.reply({ content: text });
-            }
+            await message.reply({ content: text });
+            logger.info(`discord reply ok channel=${message.channel.id} messageId=${message.id}`);
           } catch (err) {
-            logger.error('discord reply failed', err as unknown);
-            if (message.channel instanceof TextChannel) {
-              await message.channel.send(text);
-            }
+            logger.error('discord reply fallback failed', err as unknown);
           }
         },
       });

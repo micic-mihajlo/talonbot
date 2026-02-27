@@ -52,7 +52,7 @@ const commandExists = (command: string): boolean => {
   }
 
   try {
-    execFileSync('command', ['-v', command], { stdio: 'ignore' });
+    execFileSync('sh', ['-lc', `command -v ${JSON.stringify(command)}`], { stdio: 'ignore' });
     return true;
   } catch {
     return false;

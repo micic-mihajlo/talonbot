@@ -1,11 +1,67 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import type { AgentEngine, EngineInput, EngineOutput } from './types.js';
 import { Logger } from '../utils/logger.js';
 import { expandPath } from '../utils/path.js';
 
-const execFileAsync = promisify(execFile);
+const ENGINE_ENV_ALLOWLIST = [
+  'HOME',
+  'PATH',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'NO_PROXY',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_OAUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'AZURE_OPENAI_BASE_URL',
+  'AZURE_OPENAI_RESOURCE_NAME',
+  'AZURE_OPENAI_API_VERSION',
+  'AZURE_OPENAI_DEPLOYMENT_NAME_MAP',
+  'GEMINI_API_KEY',
+  'GROQ_API_KEY',
+  'CEREBRAS_API_KEY',
+  'XAI_API_KEY',
+  'OPENROUTER_API_KEY',
+  'AI_GATEWAY_API_KEY',
+  'ZAI_API_KEY',
+  'MISTRAL_API_KEY',
+  'MINIMAX_API_KEY',
+  'KIMI_API_KEY',
+  'AWS_PROFILE',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'AWS_REGION',
+  'PI_CODING_AGENT_DIR',
+  'PI_PACKAGE_DIR',
+  'PI_OFFLINE',
+  'PI_SHARE_VIEWER_URL',
+  'PI_AI_ANTIGRAVITY_VERSION',
+] as const;
+
+const buildEngineEnv = (input: EngineInput, cwd: string): NodeJS.ProcessEnv => {
+  const base: NodeJS.ProcessEnv = {
+    TALONBOT_SESSION: input.sessionKey,
+    TALONBOT_ROUTE: input.route,
+    PWD: cwd,
+  };
+
+  for (const key of ENGINE_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.length > 0) {
+      base[key] = value;
+    }
+  }
+
+  return base;
+};
 
 const splitCommand = (command: string, args: string) => {
   const parsed = args && args.trim().length > 0
@@ -26,42 +82,81 @@ interface ExecFailureDetails {
   stderr?: string;
 }
 
-const describeExecFailure = (error: unknown): ExecFailureDetails => {
-  const fallback: ExecFailureDetails = {
-    message: error instanceof Error ? error.message : String(error),
-    timedOut: false,
-  };
+interface ExecSuccess {
+  stdout: string;
+  stderr: string;
+}
 
-  if (!error || typeof error !== 'object') {
-    return fallback;
-  }
+interface ExecOptions {
+  timeoutMs: number;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}
 
-  const source = error as {
-    message?: unknown;
-    code?: unknown;
-    signal?: unknown;
-    killed?: unknown;
-    stdout?: unknown;
-    stderr?: unknown;
-  };
+const runProcess = (cmd: string, args: string[], options: ExecOptions): Promise<ExecSuccess> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
 
-  const message = typeof source.message === 'string' ? source.message : fallback.message;
-  const code = typeof source.code === 'number' || typeof source.code === 'string' ? source.code : undefined;
-  const signal = typeof source.signal === 'string' ? source.signal : null;
-  const killed = source.killed === true;
-  const timedOut = killed || /timed out/i.test(message);
-  const stdout = typeof source.stdout === 'string' ? source.stdout.trim() : '';
-  const stderr = typeof source.stderr === 'string' ? source.stderr.trim() : '';
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
 
-  return {
-    message,
-    code,
-    signal,
-    timedOut,
-    stdout: stdout || undefined,
-    stderr: stderr || undefined,
-  };
-};
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+
+    // pi can wait for stdin in some modes; close immediately for one-shot turn execution.
+    child.stdin.end();
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, options.timeoutMs);
+
+    const abortHandler = () => {
+      child.kill('SIGTERM');
+    };
+
+    options.signal?.addEventListener('abort', abortHandler, { once: true });
+
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abortHandler);
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abortHandler);
+
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      const details: ExecFailureDetails = {
+        message: `Command failed: ${cmd} ${args.join(' ')}`,
+        code: code ?? undefined,
+        signal,
+        timedOut,
+        stdout: stdout.trim() || undefined,
+        stderr: stderr.trim() || undefined,
+      };
+
+      reject(details);
+    });
+  });
 
 export class ProcessEngine implements AgentEngine {
   private readonly logger = new Logger('engine.process');
@@ -93,22 +188,15 @@ export class ProcessEngine implements AgentEngine {
 
     let stdout = '';
     try {
-      const result = await execFileAsync(cmd, [...cmdArgs, payload], {
+      const result = await runProcess(cmd, [...cmdArgs, payload], {
         cwd: this.cwd,
-        timeout: this.timeoutMs,
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-        encoding: 'utf8',
+        timeoutMs: this.timeoutMs,
         signal,
-        env: {
-          ...process.env,
-          TALONBOT_SESSION: input.sessionKey,
-          TALONBOT_ROUTE: input.route,
-          PWD: this.cwd,
-        },
+        env: buildEngineEnv(input, this.cwd),
       });
       stdout = result.stdout;
     } catch (error) {
+      const details = (error && typeof error === 'object' ? error : { message: String(error), timedOut: false }) as ExecFailureDetails;
       this.logger.error('engine process invocation failed', {
         sessionKey: input.sessionKey,
         route: input.route,
@@ -117,7 +205,7 @@ export class ProcessEngine implements AgentEngine {
         timeoutMs: this.timeoutMs,
         cwd: this.cwd,
         payloadBytes: Buffer.byteLength(payload, 'utf8'),
-        ...describeExecFailure(error),
+        ...details,
       });
       throw error;
     }
