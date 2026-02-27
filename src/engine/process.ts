@@ -15,6 +15,52 @@ const splitCommand = (command: string, args: string) => {
   return [command, ...parsed];
 };
 
+interface ExecFailureDetails {
+  message: string;
+  code?: number | string;
+  signal?: string | null;
+  timedOut: boolean;
+  stdout?: string;
+  stderr?: string;
+}
+
+const describeExecFailure = (error: unknown): ExecFailureDetails => {
+  const fallback: ExecFailureDetails = {
+    message: error instanceof Error ? error.message : String(error),
+    timedOut: false,
+  };
+
+  if (!error || typeof error !== 'object') {
+    return fallback;
+  }
+
+  const source = error as {
+    message?: unknown;
+    code?: unknown;
+    signal?: unknown;
+    killed?: unknown;
+    stdout?: unknown;
+    stderr?: unknown;
+  };
+
+  const message = typeof source.message === 'string' ? source.message : fallback.message;
+  const code = typeof source.code === 'number' || typeof source.code === 'string' ? source.code : undefined;
+  const signal = typeof source.signal === 'string' ? source.signal : null;
+  const killed = source.killed === true;
+  const timedOut = killed || /timed out/i.test(message);
+  const stdout = typeof source.stdout === 'string' ? source.stdout.trim() : '';
+  const stderr = typeof source.stderr === 'string' ? source.stderr.trim() : '';
+
+  return {
+    message,
+    code,
+    signal,
+    timedOut,
+    stdout: stdout || undefined,
+    stderr: stderr || undefined,
+  };
+};
+
 export class ProcessEngine implements AgentEngine {
   private readonly logger = new Logger('engine.process');
 
@@ -35,7 +81,6 @@ export class ProcessEngine implements AgentEngine {
     const [cmd, ...cmdArgs] = splitCommand(this.command, this.args);
 
     let stdout = '';
-
     try {
       const result = await execFileAsync(cmd, [...cmdArgs, payload], {
         timeout: this.timeoutMs,
@@ -51,28 +96,14 @@ export class ProcessEngine implements AgentEngine {
       });
       stdout = result.stdout;
     } catch (error) {
-      const err = error as Error & {
-        code?: string | number;
-        signal?: string;
-        killed?: boolean;
-        stdout?: string;
-        stderr?: string;
-        cmd?: string;
-      };
-
       this.logger.error('engine process invocation failed', {
         sessionKey: input.sessionKey,
         route: input.route,
         command: cmd,
         args: cmdArgs,
         timeoutMs: this.timeoutMs,
-        code: err.code,
-        signal: err.signal,
-        killed: err.killed,
-        cmdline: err.cmd,
-        stderr: (err.stderr || '').toString().slice(0, 4000),
-        stdout: (err.stdout || '').toString().slice(0, 1000),
-        message: err.message,
+        payloadBytes: Buffer.byteLength(payload, 'utf8'),
+        ...describeExecFailure(error),
       });
       throw error;
     }

@@ -231,6 +231,7 @@ export class AgentSession {
         aborted: aborter.signal.aborted,
         message: err?.message,
         stack: err?.stack,
+        senderId: event.senderId,
       });
 
       if (aborter.signal.aborted) {
