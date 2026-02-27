@@ -1,10 +1,9 @@
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import os from 'node:os';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 
 import { ControlPlane } from '../src/control/daemon.js';
 import { createHttpServer } from '../src/runtime/http.js';
@@ -17,11 +16,12 @@ const createEngine = () => ({
   ping: async () => true,
 });
 
-const buildTestConfig = (dataDir: string, controlSocketPath: string, httpPort = 0): AppConfig => ({
+const buildTestConfig = (dataDir: string, controlSocketPath: string, httpPort = 0, controlAuthToken = ''): AppConfig => ({
   ...defaultConfig,
   DATA_DIR: dataDir,
   CONTROL_SOCKET_PATH: controlSocketPath,
   CONTROL_HTTP_PORT: httpPort,
+  CONTROL_AUTH_TOKEN: controlAuthToken,
   ENGINE_MODE: 'mock',
 });
 
@@ -227,18 +227,18 @@ describe('HTTP control runtime', () => {
 describe('socket control runtime', () => {
   let workingDirectory = '';
   let controlPlane: ControlPlane;
-  let socketServer: { close: () => void };
+  let socketServer: { close: () => Promise<void> };
 
   beforeEach(async () => {
     workingDirectory = await createWorkingDirectory();
     const socketPath = path.join(workingDirectory, 'control.sock');
     controlPlane = new ControlPlane(buildTestConfig(workingDirectory, socketPath), () => createEngine());
     await controlPlane.initialize();
-    socketServer = createSocketServer(controlPlane, buildTestConfig(workingDirectory, socketPath), undefined as any);
+    socketServer = await createSocketServer(controlPlane, buildTestConfig(workingDirectory, socketPath), undefined as any);
   });
 
   afterEach(async () => {
-    socketServer.close();
+    await socketServer.close();
     controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
@@ -291,6 +291,63 @@ describe('socket control runtime', () => {
   });
 });
 
+describe('socket control startup hardening', () => {
+  let workingDirectory = '';
+  let controlPlane: ControlPlane;
+
+  beforeEach(async () => {
+    workingDirectory = await createWorkingDirectory();
+    controlPlane = new ControlPlane(buildTestConfig(workingDirectory, path.join(workingDirectory, 'control.sock')), () =>
+      createEngine(),
+    );
+    await controlPlane.initialize();
+  });
+
+  afterEach(async () => {
+    controlPlane.stop();
+    await rm(workingDirectory, { recursive: true, force: true });
+  });
+
+  it('rejects startup when socket path already exists as a regular file', async () => {
+    const socketPath = path.join(workingDirectory, 'control.sock');
+    await writeFile(socketPath, 'occupied', 'utf8');
+
+    await expect(createSocketServer(controlPlane, buildTestConfig(workingDirectory, socketPath), undefined as any)).rejects.toThrow(
+      'already exists and is not a socket',
+    );
+  });
+
+  it('rejects startup when socket path exceeds unix socket byte limit', async () => {
+    const socketPath = path.join(workingDirectory, 'nested', 'a'.repeat(120), 'control.sock');
+
+    await expect(createSocketServer(controlPlane, buildTestConfig(workingDirectory, socketPath), undefined as any)).rejects.toThrow(
+      'CONTROL_SOCKET_PATH is too long',
+    );
+  });
+
+  it('does not rewrite non-leading tilde characters in the socket path', async () => {
+    const socketPath = path.join(workingDirectory, 'control~runtime.sock');
+    const socketServer = await createSocketServer(controlPlane, buildTestConfig(workingDirectory, socketPath), undefined as any);
+
+    try {
+      await access(socketPath);
+      const response = await sendSocket(socketPath, {
+        type: 'ping',
+        id: 'unknown-1',
+        sessionKey: 'discord:engineering:main',
+      });
+      expect(response).toMatchObject({
+        type: 'response',
+        command: 'ping',
+        success: false,
+        error: 'Unsupported command: ping',
+      });
+    } finally {
+      await socketServer.close();
+    }
+  });
+});
+
 describe('HTTP control auth gating', () => {
   let workingDirectory = '';
   let controlPlane: ControlPlane;
@@ -300,8 +357,7 @@ describe('HTTP control auth gating', () => {
   beforeEach(async () => {
     workingDirectory = await createWorkingDirectory();
     const socketPath = path.join(workingDirectory, 'control.sock');
-    const secureConfig = buildTestConfig(workingDirectory, socketPath, 0);
-    secureConfig.CONTROL_AUTH_TOKEN = 'super-secret-token';
+    const secureConfig = buildTestConfig(workingDirectory, socketPath, 0, 'super-secret-token');
 
     controlPlane = new ControlPlane(secureConfig, () => createEngine());
     await controlPlane.initialize();
@@ -330,6 +386,31 @@ describe('HTTP control auth gating', () => {
     expect(allowed.statusCode).toBe(200);
     expect(Array.isArray(allowed.payload.sessions)).toBe(true);
 
+    const dispatchDenied = await requestHttp<{ error: string }>(httpPort, '/dispatch', {
+      method: 'POST',
+      body: {
+        source: 'discord',
+        channelId: 'engineering',
+        text: 'dispatch denied',
+      },
+    });
+    expect(dispatchDenied.statusCode).toBe(401);
+    expect(dispatchDenied.payload.error).toBe('unauthorized');
+
+    const dispatchAllowed = await requestHttp<{ accepted: boolean }>(httpPort, '/dispatch', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+      body: {
+        source: 'discord',
+        channelId: 'engineering',
+        text: 'dispatch allowed',
+      },
+    });
+    expect(dispatchAllowed.statusCode).toBe(200);
+    expect(dispatchAllowed.payload.accepted).toBe(true);
+
     const aliasDenied = await requestHttp<{ error: string }>(httpPort, '/alias', {
       method: 'POST',
       body: {
@@ -350,6 +431,18 @@ describe('HTTP control auth gating', () => {
     });
     expect(aliasAllowed.statusCode).toBe(200);
     expect(Array.isArray(aliasAllowed.payload.aliases)).toBe(true);
+
+    const aliasesDenied = await requestHttp<{ error: string }>(httpPort, '/aliases');
+    expect(aliasesDenied.statusCode).toBe(401);
+    expect(aliasesDenied.payload.error).toBe('unauthorized');
+
+    const aliasesAllowed = await requestHttp<{ aliases: unknown[] }>(httpPort, '/aliases', {
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+    });
+    expect(aliasesAllowed.statusCode).toBe(200);
+    expect(Array.isArray(aliasesAllowed.payload.aliases)).toBe(true);
 
     const statusDenied = await requestHttp<{ error: string }>(httpPort, '/status');
     expect(statusDenied.statusCode).toBe(401);

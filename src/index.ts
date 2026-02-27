@@ -45,7 +45,7 @@ const run = async () => {
 
   const control = new ControlPlane(config);
   await control.initialize();
-  const socketServer = createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
+  const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
 
   const taskOrchestrator = new TaskOrchestrator(config);
   await taskOrchestrator.initialize();

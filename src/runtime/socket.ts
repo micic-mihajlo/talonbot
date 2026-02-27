@@ -1,10 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
 import { createLogger } from '../utils/logger.js';
 import { ControlPlane } from '../control/index.js';
 import type { AppConfig } from '../config.js';
+import { expandPath } from '../utils/path.js';
 import { randomUUID } from 'node:crypto';
 import type {
   ControlRpcEvent,
@@ -13,7 +13,73 @@ import type {
 } from '../shared/protocol.js';
 import type { Socket } from 'node:net';
 
-const safeSocketPath = (rawPath: string, home: string) => rawPath.replace('~', home);
+const SOCKET_PATH_MAX_BYTES = process.platform === 'darwin' ? 103 : 107;
+
+const assertSocketPathLength = (socketPath: string) => {
+  if (process.platform === 'win32') {
+    return;
+  }
+
+  const socketPathBytes = Buffer.byteLength(socketPath);
+  if (socketPathBytes > SOCKET_PATH_MAX_BYTES) {
+    throw new Error(
+      `CONTROL_SOCKET_PATH is too long (${socketPathBytes} bytes, max ${SOCKET_PATH_MAX_BYTES}): ${socketPath}`,
+    );
+  }
+};
+
+const ensureSocketDirectory = (dir: string) => {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
+};
+
+const unlinkIfStaleSocket = (socketPath: string) => {
+  if (!fs.existsSync(socketPath)) {
+    return;
+  }
+
+  const stats = fs.lstatSync(socketPath);
+  if (!stats.isSocket()) {
+    throw new Error(`CONTROL_SOCKET_PATH already exists and is not a socket: ${socketPath}`);
+  }
+
+  fs.unlinkSync(socketPath);
+};
+
+const unlinkIfSocket = (socketPath: string) => {
+  if (!fs.existsSync(socketPath)) {
+    return;
+  }
+
+  const stats = fs.lstatSync(socketPath);
+  if (stats.isSocket()) {
+    fs.unlinkSync(socketPath);
+  }
+};
+
+const waitForSocketServerListen = (server: net.Server, socketPath: string) =>
+  new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    try {
+      server.listen(socketPath);
+    } catch (error) {
+      server.off('error', onError);
+      server.off('listening', onListening);
+      reject(error as Error);
+    }
+  });
+
 const writeResponse = (socket: Socket, response: ControlRpcResponse | ControlRpcEvent | Record<string, unknown>) => {
   try {
     socket.write(`${JSON.stringify(response)}\n`);
@@ -49,16 +115,24 @@ const respondParseError = (socket: Socket, message: string, command?: string, id
 const randomId = () => `socket-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const MAX_CONTROL_PAYLOAD_BYTES = 1_000_000;
 
-export const createSocketServer = (control: ControlPlane, config: AppConfig, logger = createLogger('runtime.socket', 'info')) => {
-  const socketPath = safeSocketPath(config.CONTROL_SOCKET_PATH, os.homedir());
+export interface SocketServerHandle {
+  close: () => Promise<void>;
+}
+
+export const createSocketServer = async (
+  control: ControlPlane,
+  config: AppConfig,
+  logger = createLogger('runtime.socket', 'info'),
+): Promise<SocketServerHandle> => {
+  const socketPath = expandPath(config.CONTROL_SOCKET_PATH);
   const dir = path.dirname(socketPath);
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  if (fs.existsSync(socketPath)) {
-    fs.unlinkSync(socketPath);
+  assertSocketPathLength(socketPath);
+  try {
+    ensureSocketDirectory(dir);
+    unlinkIfStaleSocket(socketPath);
+  } catch (error) {
+    throw new Error(`Failed to prepare control socket at ${socketPath}: ${(error as Error).message}`);
   }
 
   const server = net.createServer((client) => {
@@ -170,19 +244,35 @@ export const createSocketServer = (control: ControlPlane, config: AppConfig, log
     });
   });
 
-  server.listen(socketPath, () => {
-    try {
-      fs.chmodSync(socketPath, 0o600);
-    } catch {
-      // fallback to OS default permissions when chmod fails
-    }
+  await waitForSocketServerListen(server, socketPath);
+
+  server.on('error', (error) => {
+    logger.error('socket server error', error);
   });
 
+  try {
+    fs.chmodSync(socketPath, 0o600);
+  } catch {
+    // fallback to OS default permissions when chmod fails
+  }
+
+  let closed = false;
+
   return {
-    close: () => {
-      server.close();
-      if (fs.existsSync(socketPath)) {
-        fs.unlinkSync(socketPath);
+    close: async () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+
+      try {
+        unlinkIfSocket(socketPath);
+      } catch (error) {
+        logger.warn(`failed to cleanup control socket at ${socketPath}: ${(error as Error).message}`);
       }
     },
   };

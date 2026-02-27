@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AppConfig } from '../config.js';
+import { expandPath } from './path.js';
 
 export interface StartupIssue {
   severity: 'warn' | 'error';
@@ -19,14 +20,17 @@ const ensureDirWritable = (targetPath: string): string | null => {
   }
 };
 
+const SOCKET_PATH_MAX_BYTES = process.platform === 'darwin' ? 103 : 107;
+
 export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   const issues: StartupIssue[] = [];
 
-  const expandedDataDir = config.DATA_DIR.replace('~', process.env.HOME || '');
-  const expandedSocketDir = path.dirname(config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || ''));
-  const expandedWorktreeDir = config.WORKTREE_ROOT_DIR.replace('~', process.env.HOME || '');
-  const expandedReleaseDir = config.RELEASE_ROOT_DIR.replace('~', process.env.HOME || '');
-  const expandedEngineDir = config.ENGINE_CWD.replace('~', process.env.HOME || '');
+  const expandedDataDir = expandPath(config.DATA_DIR);
+  const expandedSocketPath = expandPath(config.CONTROL_SOCKET_PATH);
+  const expandedSocketDir = path.dirname(expandedSocketPath);
+  const expandedWorktreeDir = expandPath(config.WORKTREE_ROOT_DIR);
+  const expandedReleaseDir = expandPath(config.RELEASE_ROOT_DIR);
+  const expandedEngineDir = expandPath(config.ENGINE_CWD);
 
   if (!config.CONTROL_AUTH_TOKEN) {
     issues.push({
@@ -90,6 +94,17 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
       area: 'socket',
       message: `CONTROL_SOCKET_PATH directory is not writable (${expandedSocketDir}): ${socketDirErr}`,
     });
+  }
+
+  if (process.platform !== 'win32') {
+    const socketPathBytes = Buffer.byteLength(expandedSocketPath);
+    if (socketPathBytes > SOCKET_PATH_MAX_BYTES) {
+      issues.push({
+        severity: 'error',
+        area: 'socket',
+        message: `CONTROL_SOCKET_PATH is too long (${socketPathBytes} bytes, max ${SOCKET_PATH_MAX_BYTES}): ${expandedSocketPath}`,
+      });
+    }
   }
 
   const worktreeDirErr = ensureDirWritable(expandedWorktreeDir);

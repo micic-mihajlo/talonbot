@@ -27,5 +27,19 @@ describe('startup validation', () => {
 
     expect(issues.some((issue) => issue.area === 'engine' && issue.severity === 'error')).toBe(true);
   });
-});
 
+  it('errors when CONTROL_SOCKET_PATH is longer than unix socket limits', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      CONTROL_AUTH_TOKEN: 'startup-check-token-very-long-123456',
+      DATA_DIR: '/tmp/talonbot-check-data',
+      CONTROL_SOCKET_PATH: path.join('/tmp', `talonbot-${'x'.repeat(140)}`, 'control.sock'),
+    });
+
+    expect(
+      issues.some(
+        (issue) => issue.area === 'socket' && issue.severity === 'error' && issue.message.includes('too long'),
+      ),
+    ).toBe(true);
+  });
+});
