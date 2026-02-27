@@ -8,6 +8,9 @@ By default it:
 - builds the app,
 - and prints next-step run commands.
 
+Optional verification:
+- add `--doctor` to run post-install checks and runtime probes.
+
 Set environment variables before running if you want different defaults:
 - `ENGINE_MODE` (`mock` or `process`)
 - `CONTROL_HTTP_PORT`
@@ -20,7 +23,7 @@ Set environment variables before running if you want different defaults:
 
 ```bash
 cd /path/to/talonbot
-./install.sh
+./install.sh --doctor
 node dist/index.js
 ```
 
@@ -38,7 +41,7 @@ npm run cli -- status
 
 ```bash
 cd /path/to/talonbot
-sudo ./install.sh --daemon
+sudo ./install.sh --daemon --doctor
 ```
 
 This installs `/etc/systemd/system/talonbot.service`, enables it, and starts it.
@@ -48,6 +51,8 @@ Check service:
 ```bash
 sudo systemctl status talonbot.service
 sudo journalctl -u talonbot.service -f
+talonbot status --api
+talonbot operator
 ```
 
 ## Linux VPS bootstrap with explicit templates
@@ -77,3 +82,17 @@ Foreground run for quick iteration:
 ```bash
 ./install.sh --start
 ```
+
+## Troubleshooting service setup
+
+If `systemctl status talonbot.service` shows startup failure:
+
+1. Validate environment and runtime:
+- `npm run doctor -- --strict`
+- `npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`
+2. Validate file and user permissions:
+- `ls -ld "$(dirname "$CONTROL_SOCKET_PATH")" "$DATA_DIR" "$RELEASE_ROOT_DIR"`
+- Ensure `SERVICE_USER` owns writable runtime paths.
+3. Validate control API auth behavior:
+- `talonbot status --api`
+- If unauthorized, update `CONTROL_AUTH_TOKEN` in `.env` and restart service.

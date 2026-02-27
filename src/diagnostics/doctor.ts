@@ -1,12 +1,9 @@
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 import { config } from '../config.js';
-import { validateStartupConfig, type StartupIssue } from '../utils/startup.js';
+import { formatStartupIssue, validateStartupConfig, type StartupIssue } from '../utils/startup.js';
 
-type DoctorArgName = '--json' | '--strict' | '--runtime-url' | '--runtime-token';
 type DoctorArgs = {
   json: boolean;
   strict: boolean;
@@ -21,13 +18,24 @@ const parseArgs = (): DoctorArgs => {
     strict: false,
   };
 
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
     if (arg === '--json') {
       parsed.json = true;
       continue;
     }
     if (arg === '--strict') {
       parsed.strict = true;
+      continue;
+    }
+    if (arg === '--runtime-url') {
+      parsed.runtimeUrl = args[index + 1] || '';
+      index += 1;
+      continue;
+    }
+    if (arg === '--runtime-token') {
+      parsed.runtimeToken = args[index + 1] || '';
+      index += 1;
       continue;
     }
     if (arg.startsWith('--runtime-url=')) {
@@ -42,58 +50,38 @@ const parseArgs = (): DoctorArgs => {
   return parsed;
 };
 
-const commandExists = (command: string): boolean => {
-  if (!command.trim()) {
-    return false;
-  }
-
-  if (command.includes('/')) {
-    return fs.existsSync(command);
-  }
-
-  try {
-    execFileSync('sh', ['-lc', `command -v ${JSON.stringify(command)}`], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const buildIssue = (issues: StartupIssue[], severity: 'warn' | 'error', area: string, message: string) => {
-  issues.push({ severity, area, message });
+const buildIssue = (
+  issues: StartupIssue[],
+  severity: 'warn' | 'error',
+  area: string,
+  message: string,
+  remediation?: string,
+  code?: string,
+) => {
+  issues.push({ severity, area, message, remediation, code });
 };
 
 const buildRunChecks = (issues: StartupIssue[]) => {
   if (!fs.existsSync(path.join(process.cwd(), 'dist', 'index.js'))) {
-    buildIssue(issues, 'error', 'runtime', 'dist/index.js is missing; run npm run build before start.');
-  }
-
-  if (!process.env.HOME) {
-    buildIssue(issues, 'error', 'runtime', 'HOME is not set.');
-  }
-
-  if (config.ENGINE_MODE === 'process' && !commandExists(config.ENGINE_COMMAND)) {
     buildIssue(
       issues,
       'error',
-      'engine',
-      `ENGINE_COMMAND "${config.ENGINE_COMMAND}" is not executable or not on PATH.`,
+      'runtime',
+      'dist/index.js is missing; runtime is not built.',
+      'Run npm run build, then retry talonbot start or systemctl restart talonbot.service.',
+      'runtime_dist_missing',
     );
   }
 
-  if (config.SLACK_ENABLED) {
-    if (!config.SLACK_BOT_TOKEN || !config.SLACK_APP_TOKEN || !config.SLACK_SIGNING_SECRET) {
-      buildIssue(
-        issues,
-        'error',
-        'transport',
-        'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.',
-      );
-    }
-  }
-
-  if (config.DISCORD_ENABLED && !config.DISCORD_TOKEN) {
-    buildIssue(issues, 'error', 'transport', 'DISCORD_ENABLED=true requires DISCORD_TOKEN.');
+  if (!process.env.HOME) {
+    buildIssue(
+      issues,
+      'error',
+      'runtime',
+      'HOME is not set.',
+      'Set HOME for the service user in the environment and restart the process.',
+      'runtime_home_missing',
+    );
   }
 
   const dataDir = config.DATA_DIR.replace('~', process.env.HOME || '');
@@ -101,15 +89,36 @@ const buildRunChecks = (issues: StartupIssue[]) => {
   const socketDir = path.dirname(socketPath);
 
   if (!fs.existsSync(dataDir)) {
-    buildIssue(issues, 'warn', 'storage', `DATA_DIR ${dataDir} does not exist (it will be created by startup checks).`);
+    buildIssue(
+      issues,
+      'warn',
+      'storage',
+      `DATA_DIR ${dataDir} does not exist yet.`,
+      'Create it now to avoid startup-time permission surprises: mkdir -p "<DATA_DIR>"',
+      'storage_data_dir_missing',
+    );
   }
 
   if (!fs.existsSync(socketDir)) {
-    buildIssue(issues, 'warn', 'socket', `CONTROL_SOCKET_PATH directory ${socketDir} does not exist yet.`);
+    buildIssue(
+      issues,
+      'warn',
+      'socket',
+      `CONTROL_SOCKET_PATH directory ${socketDir} does not exist yet.`,
+      'Create the parent directory or set CONTROL_SOCKET_PATH to a writable directory.',
+      'socket_dir_missing',
+    );
   }
 
   if (!fs.existsSync('/tmp')) {
-    buildIssue(issues, 'warn', 'runtime', '/tmp is not available for temporary socket smoke paths.');
+    buildIssue(
+      issues,
+      'warn',
+      'runtime',
+      '/tmp is not available for temporary runtime checks.',
+      'Ensure /tmp exists and is writable, or use an alternate tmp mount before starting service checks.',
+      'runtime_tmp_missing',
+    );
   }
 };
 
@@ -134,33 +143,75 @@ const checkRuntime = async (url: string, issues: StartupIssue[], token?: string)
   try {
     const health = await fetch(`${url.replace(/\/$/, '')}/health`, { headers });
     if (!health.ok) {
-      buildIssue(issues, 'error', 'runtime', `Health check failed with status ${health.status}.`);
+      buildIssue(
+        issues,
+        'error',
+        'runtime',
+        `Health check failed with status ${health.status}.`,
+        'Confirm talonbot is running, verify CONTROL_HTTP_PORT, and retry with --runtime-url pointing to the correct host:port.',
+        'runtime_health_status_failed',
+      );
       return;
     }
 
     const payload = (await parseJsonBody(health)) as { status?: string };
     if (payload.status !== 'ok') {
-      buildIssue(issues, 'error', 'runtime', `Health status not ok: ${JSON.stringify(payload)}.`);
+      buildIssue(
+        issues,
+        'error',
+        'runtime',
+        `Health status not ok: ${JSON.stringify(payload)}.`,
+        'Inspect logs (`talonbot logs` or journalctl -u talonbot.service -f) and resolve dependency errors before deploy.',
+        'runtime_health_payload_not_ok',
+      );
     }
   } catch (error) {
-    buildIssue(issues, 'error', 'runtime', `Health endpoint not reachable at ${url}: ${(error as Error).message}`);
+    buildIssue(
+      issues,
+      'error',
+      'runtime',
+      `Health endpoint not reachable at ${url}: ${(error as Error).message}`,
+      'Start or restart talonbot, then retry doctor with the correct --runtime-url.',
+      'runtime_health_unreachable',
+    );
   }
 
   try {
     const sessions = await fetch(`${url.replace(/\/$/, '')}/sessions`, { headers });
     if (!token && sessions.status === 401) {
-      // expected when tokenless auth is enforced
+      buildIssue(
+        issues,
+        'warn',
+        'runtime',
+        'Runtime auth is enabled and no token was provided for /sessions probe.',
+        'Pass --runtime-token <token> or set CONTROL_AUTH_TOKEN in environment before running doctor runtime checks.',
+        'runtime_auth_token_missing_for_probe',
+      );
       return;
     }
     if (token && !sessions.ok && sessions.status !== 401) {
-      buildIssue(issues, 'warn', 'runtime', `Authenticated /sessions check returned status ${sessions.status}.`);
+      buildIssue(
+        issues,
+        'warn',
+        'runtime',
+        `Authenticated /sessions check returned status ${sessions.status}.`,
+        'Verify CONTROL_AUTH_TOKEN matches the running service and retry.',
+        'runtime_sessions_status_unexpected',
+      );
       return;
     }
     if (token && sessions.status === 200) {
       await parseJsonBody(sessions);
     }
   } catch (error) {
-    buildIssue(issues, 'warn', 'runtime', `Runtime sessions endpoint check failed: ${(error as Error).message}`);
+    buildIssue(
+      issues,
+      'warn',
+      'runtime',
+      `Runtime sessions endpoint check failed: ${(error as Error).message}`,
+      'Check network/firewall to localhost control port and retry.',
+      'runtime_sessions_probe_failed',
+    );
   }
 };
 
@@ -184,7 +235,7 @@ const printText = (issues: StartupIssue[]) => {
 
   for (const issue of issues) {
     const tag = issue.severity === 'error' ? '[ERROR]' : '[WARN]';
-    process.stdout.write(`${tag} [${issue.area}] ${issue.message}\n`);
+    process.stdout.write(`${tag} [${issue.area}] ${formatStartupIssue(issue)}\n`);
   }
 };
 

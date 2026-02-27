@@ -6,7 +6,7 @@ import { createHttpServer } from './runtime/http.js';
 import { SlackTransport } from './transports/slack/index.js';
 import { DiscordTransport } from './transports/discord/index.js';
 import { createSocketServer } from './runtime/socket.js';
-import { validateStartupConfig } from './utils/startup.js';
+import { formatStartupIssue, validateStartupConfig } from './utils/startup.js';
 import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
 import { BridgeSupervisor } from './bridge/supervisor.js';
 import { ReleaseManager } from './ops/release-manager.js';
@@ -31,10 +31,11 @@ const run = async () => {
   const hasStartupError = startupIssues.some((issue) => issue.severity === 'error');
 
   for (const issue of startupIssues) {
+    const rendered = formatStartupIssue(issue);
     if (issue.severity === 'error') {
-      logger.error(`[startup/${issue.area}] ${issue.message}`);
+      logger.error(`[startup/${issue.area}] ${rendered}`);
     } else {
-      logger.warn(`[startup/${issue.area}] ${issue.message}`);
+      logger.warn(`[startup/${issue.area}] ${rendered}`);
     }
   }
 

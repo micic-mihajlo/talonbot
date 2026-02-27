@@ -28,7 +28,7 @@ No Slack/Discord credentials required for this path. Use the built-in mock engin
 ```bash
 cd /path/to/talonbot
 cp .env.example .env
-./install.sh --start
+./install.sh --doctor --start
 ```
 
 This gives an immediate local control-plane at:
@@ -41,7 +41,7 @@ If you want it as a long-running VPS service:
 ```bash
 cd /path/to/talonbot
 cp .env.example .env
-./install.sh --daemon
+./install.sh --daemon --doctor
 ```
 
 This generates a dedicated `talonbot.service`, enables it, and starts it on boot.
@@ -83,6 +83,7 @@ Run health/config sanity checks locally with:
 
 ```bash
 npm run doctor
+npm run cli -- operator
 ```
 
 Enable one transport when you’re ready to connect real chat:
@@ -171,7 +172,10 @@ Daemon installs place a global `talonbot` command in `/usr/local/bin/talonbot`.
 
 ```bash
 npm run cli -- status
+npm run cli -- status --api
 npm run cli -- doctor
+npm run cli -- operator
+npm run cli -- operator --json
 npm run cli -- env set CONTROL_AUTH_TOKEN your-long-token
 npm run cli -- env get CONTROL_AUTH_TOKEN
 npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default true
@@ -189,5 +193,18 @@ Equivalent direct usage (after daemon install):
 
 ```bash
 talonbot status
+talonbot operator
 talonbot tasks list
 ```
+
+## Troubleshooting quick hits
+
+- `talonbot status` shows service errors:
+  - Run `talonbot status --api` to bypass `systemctl` fallback and check API reachability directly.
+  - Run `talonbot operator` for a combined health/release/sentry snapshot.
+- `talonbot doctor` reports startup errors:
+  - Follow remediation text attached to each issue.
+  - Re-run with runtime probe: `npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`.
+- Deploy or rollback fails:
+  - Verify release state with `curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status`.
+  - Inspect service logs: `journalctl -u talonbot.service -f`.

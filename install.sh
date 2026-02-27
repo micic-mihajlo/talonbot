@@ -3,29 +3,44 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
-NODE_BIN="$(command -v node)"
-NPM_BIN="$(command -v npm)"
+NODE_BIN="$(command -v node || true)"
+NPM_BIN="$(command -v npm || true)"
 INSTALL_SERVICE=0
 OVERWRITE_ENV=0
 START_LOCAL=0
+RUN_DOCTOR=0
+
+log_info() {
+  echo "[install] $*"
+}
+
+log_warn() {
+  echo "[install][warn] $*"
+}
+
+log_error() {
+  echo "[install][error] $*" >&2
+}
 
 if [ -z "$NODE_BIN" ] || [ -z "$NPM_BIN" ]; then
-  echo "❌ Node.js/npm are required. Install Node >=20 first."
+  log_error "Node.js and npm are required (Node >=20)."
+  log_error "Install Node, then rerun ./install.sh."
   exit 1
 fi
 
 NODE_MAJOR="$(node -v | tr -d 'v' | cut -d. -f1)"
 if ! [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] || [ "$NODE_MAJOR" -lt 20 ]; then
-  echo "❌ Node 20+ is required. Current version: $(node -v)"
+  log_error "Node 20+ is required. Current version: $(node -v)"
   exit 1
 fi
 
 usage() {
-  echo "Usage: ./install.sh [--daemon] [--force-env] [--start]"
+  echo "Usage: ./install.sh [--daemon] [--force-env] [--start] [--doctor]"
   echo
   echo "  --daemon     Install + enable a systemd service for production use."
   echo "  --force-env  Regenerate .env even if it already exists."
   echo "  --start      Start in foreground after build (non-daemon mode)."
+  echo "  --doctor     Run doctor checks after install/build (and runtime checks in daemon mode)."
   echo
   echo "Environment defaults can be customized before running this script:"
   echo "  ENGINE_MODE=mock|process, ENGINE_COMMAND, CONTROL_HTTP_PORT, SLACK_ENABLED, DISCORD_ENABLED, etc."
@@ -45,12 +60,16 @@ while [[ $# -gt 0 ]]; do
       START_LOCAL=1
       shift
       ;;
+    --doctor)
+      RUN_DOCTOR=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      log_error "Unknown option: $1"
       usage
       exit 1
       ;;
@@ -58,7 +77,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 run_as_user="${SUDO_USER:-$(id -un)}"
-run_as_home="$(getent passwd "$run_as_user" | cut -d: -f6)"
+run_as_home="$(getent passwd "$run_as_user" | cut -d: -f6 || true)"
 
 if [ -z "$run_as_home" ]; then
   run_as_home="$HOME"
@@ -70,7 +89,7 @@ resolve_env() {
 
 write_env() {
   if [ -f "$ENV_FILE" ] && [ "$OVERWRITE_ENV" -ne 1 ]; then
-    echo "Using existing .env at $ENV_FILE"
+    log_info "Using existing .env at $ENV_FILE"
     return
   fi
 
@@ -81,7 +100,7 @@ write_env() {
   ENGINE_ARGS="$(resolve_env "${ENGINE_ARGS:-}")"
   ENGINE_CWD="$(resolve_env "${ENGINE_CWD:-$DATA_DIR/engine}")"
 
-  cat <<EOF > "$ENV_FILE"
+  cat <<ENV_EOF > "$ENV_FILE"
 NODE_ENV=production
 LOG_LEVEL=info
 DATA_DIR=$DATA_DIR
@@ -134,41 +153,86 @@ DISCORD_REACTIONS_ENABLED=${DISCORD_REACTIONS_ENABLED:-true}
 DISCORD_ALLOWED_CHANNELS=${DISCORD_ALLOWED_CHANNELS:-}
 DISCORD_ALLOWED_GUILDS=${DISCORD_ALLOWED_GUILDS:-}
 DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS:-}
-EOF
+ENV_EOF
 
-  echo "Generated .env at $ENV_FILE"
+  log_info "Generated .env at $ENV_FILE"
+}
+
+read_env_value() {
+  local key="$1"
+  local value
+  value="$(awk -F= -v k="$key" '$1==k {print substr($0, index($0, "=") + 1)}' "$ENV_FILE" | tail -n 1)"
+  printf '%s' "$value"
+}
+
+run_doctor_checks() {
+  local mode="$1"
+  local runtime_port
+  local runtime_token
+
+  log_info "Running doctor checks..."
+  if ! "$NPM_BIN" run doctor; then
+    log_warn "doctor reported issues. Review output and fix before production rollout."
+  fi
+
+  if [ "$mode" = "daemon" ]; then
+    runtime_port="$(read_env_value CONTROL_HTTP_PORT)"
+    runtime_token="$(read_env_value CONTROL_AUTH_TOKEN)"
+    if [ -z "$runtime_port" ]; then
+      runtime_port="8080"
+    fi
+
+    if [ -n "$runtime_token" ]; then
+      if ! "$NPM_BIN" run doctor -- --runtime-url "http://127.0.0.1:$runtime_port" --runtime-token "$runtime_token"; then
+        log_warn "runtime doctor checks reported issues. Inspect `talonbot status` and service logs."
+      fi
+    else
+      if ! "$NPM_BIN" run doctor -- --runtime-url "http://127.0.0.1:$runtime_port"; then
+        log_warn "runtime doctor checks reported issues. Set CONTROL_AUTH_TOKEN and rerun doctor for full auth checks."
+      fi
+    fi
+  fi
 }
 
 cd "$ROOT_DIR"
 write_env
 
-echo "Installing node dependencies..."
-$NPM_BIN install
+if [ "$INSTALL_SERVICE" -eq 1 ]; then
+  if [ -z "$(read_env_value CONTROL_AUTH_TOKEN)" ]; then
+    log_warn "CONTROL_AUTH_TOKEN is empty; control endpoints will be unauthenticated."
+    log_warn "Set CONTROL_AUTH_TOKEN in $ENV_FILE before exposing control API beyond localhost."
+  fi
+fi
 
-echo "Building runtime..."
-$NPM_BIN run build
+log_info "Installing node dependencies..."
+"$NPM_BIN" install
+
+log_info "Building runtime..."
+"$NPM_BIN" run build
 
 if [ "$INSTALL_SERVICE" -eq 1 ]; then
   if ! command -v systemctl >/dev/null 2>&1; then
-    echo "❌ systemctl not found. --daemon requires a systemd host."
+    log_error "systemctl not found. --daemon requires a systemd host."
     exit 1
   fi
   if ! command -v sudo >/dev/null 2>&1; then
-    echo "❌ sudo is required for --daemon."
+    log_error "sudo is required for --daemon."
     exit 1
   fi
 
   SERVICE_USER="${SERVICE_USER:-$run_as_user}"
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-    echo "❌ service user '$SERVICE_USER' does not exist"
+    log_error "service user '$SERVICE_USER' does not exist"
     exit 1
   fi
+
+  log_info "Installing daemon service for user: $SERVICE_USER"
 
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
   sudo chmod 600 "$ENV_FILE"
 
   SERVICE_FILE="$(mktemp)"
-  cat > "$SERVICE_FILE" <<EOF
+  cat > "$SERVICE_FILE" <<SERVICE_EOF
 [Unit]
 Description=talonbot (always-on software-engineer agent)
 After=network.target
@@ -194,7 +258,7 @@ ReadWritePaths=/var/lib/talonbot /home/$SERVICE_USER/.local/share/talonbot /home
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SERVICE_EOF
 
   sudo install -m 0644 "$SERVICE_FILE" /etc/systemd/system/talonbot.service
   rm -f "$SERVICE_FILE"
@@ -218,16 +282,32 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable --now talonbot.service
 
+  if [ "$RUN_DOCTOR" -eq 1 ]; then
+    run_doctor_checks "daemon"
+  fi
+
+  port_display="$(read_env_value CONTROL_HTTP_PORT)"
+  if [ -z "$port_display" ]; then
+    port_display="8080"
+  fi
+
   echo
-  echo "Service installed and started:"
+  echo "Service installed and started."
+  echo "Quick checks:"
   echo "  sudo systemctl status talonbot.service"
   echo "  sudo journalctl -u talonbot.service -f"
-  echo "  talonbot status"
+  echo "  talonbot status --api"
+  echo "  talonbot operator"
+  echo "  npm run doctor -- --strict --runtime-url http://127.0.0.1:$port_display"
   exit 0
 fi
 
+if [ "$RUN_DOCTOR" -eq 1 ]; then
+  run_doctor_checks "local"
+fi
+
 if [ "$START_LOCAL" -eq 1 ]; then
-  echo "Starting in foreground..."
+  log_info "Starting in foreground..."
   node dist/index.js
 fi
 
@@ -237,3 +317,6 @@ echo "Run:"
 echo "  npm run start"
 echo "or"
 echo "  ./install.sh --start"
+echo "Optional checks:"
+echo "  npm run doctor"
+echo "  npm run cli -- operator"

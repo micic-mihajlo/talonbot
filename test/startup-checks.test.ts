@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
-import { validateStartupConfig } from '../src/utils/startup.js';
+import { formatStartupIssue, validateStartupConfig } from '../src/utils/startup.js';
 import { config as defaultConfig } from '../src/config.js';
+
+const tempPath = (suffix: string) => path.join('/tmp', `talonbot-check-${suffix}-${Math.random().toString(36).slice(2, 7)}`);
 
 describe('startup validation', () => {
   it('warns when CONTROL_AUTH_TOKEN is missing', () => {
@@ -13,7 +15,10 @@ describe('startup validation', () => {
       CONTROL_SOCKET_PATH: '/tmp/talonbot-check.sock',
     });
 
-    expect(issues.some((issue) => issue.area === 'control-plane' && issue.severity === 'warn')).toBe(true);
+    const issue = issues.find((entry) => entry.area === 'control-plane' && entry.code === 'missing_control_auth_token');
+    expect(issue?.severity).toBe('warn');
+    expect(issue?.remediation?.length).toBeGreaterThan(10);
+    expect(issue ? formatStartupIssue(issue) : '').toContain('Remediation:');
   });
 
   it('errors when process mode has empty command', () => {
@@ -21,12 +26,58 @@ describe('startup validation', () => {
       ...defaultConfig,
       ENGINE_MODE: 'process',
       ENGINE_COMMAND: '',
-      DATA_DIR: path.join('/tmp', `talonbot-check-${Math.random().toString(36).slice(2, 6)}`),
-      CONTROL_SOCKET_PATH: path.join('/tmp', `talonbot-check-${Math.random().toString(36).slice(2, 6)}.sock`),
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
     });
 
-    expect(issues.some((issue) => issue.area === 'engine' && issue.severity === 'error')).toBe(true);
+    const issue = issues.find((entry) => entry.code === 'missing_engine_command');
+    expect(issue?.severity).toBe('error');
   });
+
+  it('errors when process mode command is not available on path', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'process',
+      ENGINE_COMMAND: 'talonbot-command-that-does-not-exist',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+      ENGINE_CWD: tempPath('engine'),
+    });
+
+    const issue = issues.find((entry) => entry.code === 'engine_command_not_found');
+    expect(issue?.severity).toBe('error');
+  });
+
+  it('errors when slack is enabled without required tokens', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      SLACK_ENABLED: true,
+      SLACK_BOT_TOKEN: '',
+      SLACK_APP_TOKEN: '',
+      SLACK_SIGNING_SECRET: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+
+    const issue = issues.find((entry) => entry.code === 'slack_missing_secrets');
+    expect(issue?.severity).toBe('error');
+  });
+
+  it('errors when discord is enabled without token', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      DISCORD_ENABLED: true,
+      DISCORD_TOKEN: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+
+    const issue = issues.find((entry) => entry.code === 'discord_missing_token');
+    expect(issue?.severity).toBe('error');
+  });
+
 
   it('errors when CONTROL_SOCKET_PATH is longer than unix socket limits', () => {
     const issues = validateStartupConfig({

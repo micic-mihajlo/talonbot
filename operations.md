@@ -7,6 +7,8 @@ npm run cli -- start
 npm run cli -- stop
 npm run cli -- restart
 npm run cli -- status
+npm run cli -- status --api
+npm run cli -- operator
 npm run cli -- logs
 npm run cli -- doctor
 ```
@@ -60,6 +62,19 @@ Expected result for a successful deploy:
 5. Preserve evidence:
 - `npm run cli -- bundle --output /tmp`.
 - Archive the diagnostics bundle with timestamp and incident id.
+
+## Operator status drill
+
+Run this sequence before deploy or after an incident:
+
+1. `npm run cli -- operator`
+2. `npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`
+3. `npm run cli -- status --api`
+
+Expected outcome:
+- Operator summary shows reachable health/runtime/release probes.
+- Doctor returns zero errors.
+- API status responds with current runtime details and sessions/aliases arrays.
 
 ## Rollback playbook
 

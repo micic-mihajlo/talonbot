@@ -8,6 +8,32 @@ import { config } from '../config.js';
 
 const baseUrl = `http://127.0.0.1:${config.CONTROL_HTTP_PORT || 8080}`;
 
+class CliError extends Error {
+  readonly hint?: string;
+
+  constructor(message: string, hint?: string) {
+    super(message);
+    this.name = 'CliError';
+    this.hint = hint;
+  }
+}
+
+class HttpError extends CliError {
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(status: number, route: string, payload: unknown, hint?: string) {
+    super(`HTTP ${status} ${route}: ${JSON.stringify(payload)}`, hint);
+    this.name = 'HttpError';
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+const fail = (message: string, hint?: string): never => {
+  throw new CliError(message, hint);
+};
+
 const json = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 
 const parseArgs = (argv: string[]) => {
@@ -29,6 +55,21 @@ const getFlag = (args: string[], name: string, fallback = '') => {
   return fallback;
 };
 
+const hasFlag = (args: string[], name: string) => args.includes(name);
+
+const httpHint = (status: number) => {
+  if (status === 401) {
+    return 'CONTROL_AUTH_TOKEN does not match the running service. Update .env and retry `talonbot env get CONTROL_AUTH_TOKEN`.';
+  }
+  if (status === 404) {
+    return 'API route was not found. Confirm the runtime version with `talonbot operator --json`.';
+  }
+  if (status >= 500) {
+    return 'Runtime reported an internal error. Inspect logs with `talonbot logs` or `journalctl -u talonbot.service -f`.';
+  }
+  return undefined;
+};
+
 const request = async (method: 'GET' | 'POST', route: string, body?: unknown) => {
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -42,15 +83,30 @@ const request = async (method: 'GET' | 'POST', route: string, body?: unknown) =>
     headers['content-type'] = 'application/json';
   }
 
-  const res = await fetch(`${baseUrl}${route}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${route}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (error) {
+    throw new CliError(
+      `unable to reach control API at ${baseUrl}: ${(error as Error).message}`,
+      'Start or restart talonbot (`talonbot start` / `talonbot restart`) and verify CONTROL_HTTP_PORT.',
+    );
+  }
 
-  const payload = await res.json().catch(() => ({ error: 'invalid_json_response' }));
+  const raw = await res.text();
+  let payload: unknown;
+  try {
+    payload = raw ? (JSON.parse(raw) as unknown) : {};
+  } catch {
+    payload = { raw };
+  }
+
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${JSON.stringify(payload)}`);
+    throw new HttpError(res.status, route, payload, httpHint(res.status));
   }
   return payload;
 };
@@ -195,21 +251,121 @@ const attachToSession = async (sessionKey: string) => {
   });
 };
 
+type ProbeResult = {
+  ok: boolean;
+  payload?: unknown;
+  error?: string;
+  hint?: string;
+};
+
+const probeRoute = async (route: string): Promise<ProbeResult> => {
+  try {
+    return {
+      ok: true,
+      payload: await request('GET', route),
+    };
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 501) {
+      return {
+        ok: false,
+        error: 'not_configured',
+      };
+    }
+
+    const cliError = error as CliError;
+    return {
+      ok: false,
+      error: cliError.message,
+      hint: cliError.hint,
+    };
+  }
+};
+
+const runOperatorSummary = async (asJson: boolean) => {
+  const [health, status, release, sentry] = await Promise.all([
+    probeRoute('/health'),
+    probeRoute('/status'),
+    probeRoute('/release/status'),
+    probeRoute('/sentry/status'),
+  ]);
+
+  const summary = {
+    generatedAt: new Date().toISOString(),
+    controlApi: baseUrl,
+    health,
+    status,
+    release,
+    sentry,
+  };
+
+  if (asJson) {
+    json(summary);
+    return;
+  }
+
+  process.stdout.write(`operator summary\n`);
+  process.stdout.write(`control api: ${baseUrl}\n`);
+
+  if (health.ok) {
+    const payload = health.payload as { status?: string; uptime?: number; sessions?: number };
+    process.stdout.write(`health: ${payload.status || 'ok'} (uptime=${Math.round(payload.uptime || 0)}s, sessions=${payload.sessions || 0})\n`);
+  } else {
+    process.stdout.write(`health: unavailable (${health.error})\n`);
+    if (health.hint) process.stdout.write(`next: ${health.hint}\n`);
+  }
+
+  if (status.ok) {
+    const payload = status.payload as { process?: { pid?: number; node?: string }; config?: { engineMode?: string } };
+    process.stdout.write(`runtime: pid=${payload.process?.pid || 'n/a'} node=${payload.process?.node || 'n/a'} engine=${payload.config?.engineMode || 'n/a'}\n`);
+  } else {
+    process.stdout.write(`runtime: unavailable (${status.error})\n`);
+    if (status.hint) process.stdout.write(`next: ${status.hint}\n`);
+  }
+
+  if (release.ok) {
+    const payload = release.payload as { release?: { current?: string | null; previous?: string | null } };
+    process.stdout.write(`release: current=${payload.release?.current || 'none'} previous=${payload.release?.previous || 'none'}\n`);
+  } else if (release.error === 'not_configured') {
+    process.stdout.write('release: not configured\n');
+  } else {
+    process.stdout.write(`release: unavailable (${release.error})\n`);
+    if (release.hint) process.stdout.write(`next: ${release.hint}\n`);
+  }
+
+  if (sentry.ok) {
+    const payload = sentry.payload as { status?: { incidents?: number } };
+    process.stdout.write(`sentry: incidents=${payload.status?.incidents ?? 0}\n`);
+  } else if (sentry.error === 'not_configured') {
+    process.stdout.write('sentry: not configured\n');
+  } else {
+    process.stdout.write(`sentry: unavailable (${sentry.error})\n`);
+    if (sentry.hint) process.stdout.write(`next: ${sentry.hint}\n`);
+  }
+
+  process.stdout.write('next: run `talonbot doctor -- --strict --runtime-url http://127.0.0.1:8080` before deploy/rollback.\n');
+};
+
 const help = () => {
-  process.stdout.write(`talonbot CLI\n\n`);
-  process.stdout.write(`Commands:\n`);
-  process.stdout.write(`  start|stop|restart|status|logs\n`);
-  process.stdout.write(`  sessions|attach --session <sessionKey>\n`);
-  process.stdout.write(`  doctor\n`);
-  process.stdout.write(`  env get|set|list|sync\n`);
-  process.stdout.write(`  tasks list|get|create|retry|cancel\n`);
-  process.stdout.write(`  repos list|register|remove\n`);
-  process.stdout.write(`  deploy|update [--source <path>]\n`);
-  process.stdout.write(`  rollback [target]\n`);
-  process.stdout.write(`  sentry [status]\n`);
-  process.stdout.write(`  audit [--deep]|prune [days]|firewall [--dry-run]\n`);
-  process.stdout.write(`  bundle [--output <path>]\n`);
-  process.stdout.write(`  uninstall --force [--purge]\n`);
+  process.stdout.write('talonbot CLI\n\n');
+  process.stdout.write('Commands:\n');
+  process.stdout.write('  start|stop|restart|status|logs\n');
+  process.stdout.write('  status [--api|--service|--json]\n');
+  process.stdout.write('  operator [summary|status] [--json]\n');
+  process.stdout.write('  sessions|attach --session <sessionKey>\n');
+  process.stdout.write('  doctor\n');
+  process.stdout.write('  env get|set|list|sync\n');
+  process.stdout.write('  tasks list|get|create|retry|cancel\n');
+  process.stdout.write('  repos list|register|remove\n');
+  process.stdout.write('  deploy|update [--source <path>]\n');
+  process.stdout.write('  rollback [target]\n');
+  process.stdout.write('  sentry [status]\n');
+  process.stdout.write('  audit [--deep]|prune [days]|firewall [--dry-run]\n');
+  process.stdout.write('  bundle [--output <path>]\n');
+  process.stdout.write('  uninstall --force [--purge]\n\n');
+  process.stdout.write('Examples:\n');
+  process.stdout.write('  talonbot status --api\n');
+  process.stdout.write('  talonbot operator --json\n');
+  process.stdout.write('  talonbot deploy --source /path/to/talonbot\n');
 };
 
 const main = async () => {
@@ -221,6 +377,22 @@ const main = async () => {
   }
 
   if (command === 'status') {
+    const apiOnly = hasFlag(args, '--api') || hasFlag(args, '--json');
+    const serviceOnly = hasFlag(args, '--service');
+    if (apiOnly && serviceOnly) {
+      fail('status flags --api/--json and --service are mutually exclusive.');
+    }
+
+    if (apiOnly) {
+      json(await request('GET', '/status'));
+      return;
+    }
+
+    if (serviceOnly) {
+      runSystemctl('status');
+      return;
+    }
+
     try {
       runSystemctl('status');
       return;
@@ -228,6 +400,16 @@ const main = async () => {
       json(await request('GET', '/status'));
       return;
     }
+  }
+
+  if (command === 'operator') {
+    const mode = args[0] && !args[0].startsWith('--') ? args[0] : 'summary';
+    if (mode !== 'summary' && mode !== 'status') {
+      fail(`unknown operator command: ${mode}`, 'Use `talonbot operator summary` or `talonbot operator --json`.');
+    }
+
+    await runOperatorSummary(hasFlag(args, '--json'));
+    return;
   }
 
   if (command === 'sessions') {
@@ -238,7 +420,7 @@ const main = async () => {
   if (command === 'attach') {
     const session = getFlag(args, 'session') || args[0];
     if (!session) {
-      throw new Error('attach requires --session <sessionKey>');
+      fail('attach requires --session <sessionKey>', 'Example: talonbot attach --session discord:12345:main');
     }
     await attachToSession(session);
     return;
@@ -263,7 +445,7 @@ const main = async () => {
 
     if (sub === 'get') {
       const key = args[1];
-      if (!key) throw new Error('env get requires a key');
+      if (!key) fail('env get requires a key', 'Example: talonbot env get CONTROL_AUTH_TOKEN');
       const values = await readEnvMap();
       json({ key, value: values.get(key) || '' });
       return;
@@ -272,7 +454,7 @@ const main = async () => {
     if (sub === 'set') {
       const key = args[1];
       const value = args[2];
-      if (!key || value === undefined) throw new Error('env set requires key and value');
+      if (!key || value === undefined) fail('env set requires key and value', 'Example: talonbot env set LOG_LEVEL debug');
       const values = await readEnvMap();
       values.set(key, value);
       await writeEnvMap(values);
@@ -287,7 +469,7 @@ const main = async () => {
       return;
     }
 
-    throw new Error(`unknown env command: ${sub}`);
+    fail(`unknown env command: ${sub}`, 'Use: env get|set|list|sync');
   }
 
   if (command === 'tasks') {
@@ -301,7 +483,7 @@ const main = async () => {
 
     if (sub === 'get') {
       const id = args[1];
-      if (!id) throw new Error('task id required');
+      if (!id) fail('task id required', 'Example: talonbot tasks get <task-id>');
       json(await request('GET', `/tasks/${encodeURIComponent(id)}`));
       return;
     }
@@ -311,7 +493,7 @@ const main = async () => {
       const text = getFlag(args, 'text') || args.filter((arg) => !arg.startsWith('--') && arg !== 'create').join(' ');
       const fanoutArg = getFlag(args, 'fanout');
       const fanout = fanoutArg ? fanoutArg.split('|').map((item) => item.trim()).filter(Boolean) : undefined;
-      if (!text.trim()) throw new Error('task text required');
+      if (!text.trim()) fail('task text required', 'Example: talonbot tasks create --repo my-repo --text "Fix flaky CI"');
       json(
         await request('POST', '/tasks', {
           repoId: repoId || undefined,
@@ -324,19 +506,19 @@ const main = async () => {
 
     if (sub === 'retry') {
       const id = args[1];
-      if (!id) throw new Error('task id required');
+      if (!id) fail('task id required', 'Example: talonbot tasks retry <task-id>');
       json(await request('POST', `/tasks/${encodeURIComponent(id)}/retry`));
       return;
     }
 
     if (sub === 'cancel') {
       const id = args[1];
-      if (!id) throw new Error('task id required');
+      if (!id) fail('task id required', 'Example: talonbot tasks cancel <task-id>');
       json(await request('POST', `/tasks/${encodeURIComponent(id)}/cancel`));
       return;
     }
 
-    throw new Error(`unknown tasks command: ${sub}`);
+    fail(`unknown tasks command: ${sub}`, 'Use: tasks list|get|create|retry|cancel');
   }
 
   if (command === 'repos') {
@@ -351,7 +533,7 @@ const main = async () => {
       const id = getFlag(args, 'id');
       const repoPath = getFlag(args, 'path');
       if (!id || !repoPath) {
-        throw new Error('repos register requires --id and --path');
+        fail('repos register requires --id and --path', 'Example: talonbot repos register --id app --path ~/workspace/app --default true');
       }
 
       json(
@@ -368,16 +550,22 @@ const main = async () => {
 
     if (sub === 'remove') {
       const id = args[1];
-      if (!id) throw new Error('repo id required');
+      if (!id) fail('repo id required', 'Example: talonbot repos remove <repo-id>');
       json(await request('POST', '/repos/remove', { id }));
       return;
     }
 
-    throw new Error(`unknown repos command: ${sub}`);
+    fail(`unknown repos command: ${sub}`, 'Use: repos list|register|remove');
   }
 
   if (command === 'deploy' || command === 'update') {
-    json(await request('POST', '/release/update', { sourceDir: getFlag(args, 'source') || process.cwd() }));
+    const sourceDir = path.resolve(getFlag(args, 'source') || process.cwd());
+    const sourceStat = await fs.stat(sourceDir).catch(() => null);
+    if (!sourceStat || !sourceStat.isDirectory()) {
+      fail(`deploy source directory does not exist: ${sourceDir}`, 'Pass --source <path> to a valid talonbot repository root.');
+    }
+
+    json(await request('POST', '/release/update', { sourceDir }));
     return;
   }
 
@@ -392,7 +580,7 @@ const main = async () => {
       json(await request('GET', '/sentry/status'));
       return;
     }
-    throw new Error(`unknown sentry command: ${sub}`);
+    fail(`unknown sentry command: ${sub}`, 'Use: sentry status');
   }
 
   if (command === 'audit') {
@@ -421,7 +609,7 @@ const main = async () => {
   if (command === 'uninstall') {
     const force = args.includes('--force');
     if (!force) {
-      throw new Error('uninstall requires --force');
+      fail('uninstall requires --force', 'Use `talonbot uninstall --force [--purge]`.');
     }
     const purge = args.includes('--purge');
     runRepoScript('bin/uninstall.sh', purge ? ['--purge'] : []);
@@ -433,10 +621,14 @@ const main = async () => {
     return;
   }
 
-  throw new Error(`unknown command: ${command}`);
+  fail(`unknown command: ${command}`, 'Use `talonbot --help` to list commands.');
 };
 
 main().catch((error) => {
-  process.stderr.write(`talonbot cli error: ${(error as Error).message}\n`);
+  const cliError = error as CliError;
+  process.stderr.write(`talonbot cli error: ${cliError.message}\n`);
+  if (cliError.hint) {
+    process.stderr.write(`talonbot cli hint: ${cliError.hint}\n`);
+  }
   process.exit(1);
 });
