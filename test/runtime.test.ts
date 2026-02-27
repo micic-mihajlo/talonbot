@@ -407,7 +407,7 @@ describe('socket control startup hardening', () => {
         type: 'response',
         command: 'ping',
         success: false,
-        error: 'Unsupported command: ping',
+        error: 'session_not_found',
       });
     } finally {
       await socketServer.close();
