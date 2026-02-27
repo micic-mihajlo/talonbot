@@ -65,5 +65,8 @@ jobs:
       - name: Runtime doctor check
         run: |
           ENGINE_MODE=mock \
+          CONTROL_HTTP_PORT=8090 \
           CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          DISCORD_ENABLED=true \
+          DISCORD_TOKEN=integration-placeholder-token \
           npm run doctor -- --strict --runtime-url http://127.0.0.1:8090 --runtime-token integration-control-token-abcdefghijklmnopqrstuvwxyz
