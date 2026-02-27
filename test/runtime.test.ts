@@ -170,6 +170,19 @@ describe('HTTP control runtime', () => {
     expect(aliases.statusCode).toBe(200);
     expect(aliases.payload.aliases.some((item) => item.alias === 'team' && item.sessionKey === sessionKey)).toBe(true);
 
+    const aliasDispatch = await requestHttp<{ accepted: boolean; sessionKey?: string }>(httpPort, '/dispatch', {
+      method: 'POST',
+      body: {
+        source: 'discord',
+        channelId: 'other-channel',
+        text: 'through alias',
+        alias: 'team',
+      },
+    });
+    expect(aliasDispatch.statusCode).toBe(200);
+    expect(aliasDispatch.payload.accepted).toBe(true);
+    expect(aliasDispatch.payload.sessionKey).toBe(sessionKey);
+
     const aliasRemove = await requestHttp<{ removed: boolean; alias: string }>(httpPort, '/alias', {
       method: 'POST',
       body: {

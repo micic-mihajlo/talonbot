@@ -59,7 +59,7 @@ export class TaskOrchestrator {
     this.repoRegistry = new RepoRegistry(path.join(dataDir, 'repos', 'registry.json'));
     this.worktree = new WorktreeManager(config.WORKTREE_ROOT_DIR);
     this.memory = new TeamMemory(path.join(dataDir, 'memory'));
-    this.engine = buildEngine(config);
+    this.engine = buildEngine(config, 'orchestrator');
   }
 
   async initialize() {

@@ -45,6 +45,7 @@ const run = async () => {
 
   const control = new ControlPlane(config);
   await control.initialize();
+  const socketServer = createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
 
   const taskOrchestrator = new TaskOrchestrator(config);
   await taskOrchestrator.initialize();
@@ -102,6 +103,7 @@ const run = async () => {
 
   const transports: { stop: () => Promise<void> }[] = [];
   const runtimeHandles: { close: () => void | Promise<void> }[] = [];
+  runtimeHandles.push(socketServer);
 
   const slack = new SlackTransport(config, control);
   if (config.SLACK_ENABLED) {
@@ -145,15 +147,13 @@ const run = async () => {
     });
   }
 
-  const socketServer = createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
-  runtimeHandles.push(socketServer);
-
   logger.info(`talonbot started with ${transports.length} transport(s), sessions dir=${config.DATA_DIR}`);
 
   const shutdown = async () => {
     logger.info('shutdown signal received');
     sentry?.stop();
     bridge.stop();
+    await taskOrchestrator.stop();
     control.stop();
     for (const handle of runtimeHandles) {
       await Promise.resolve(handle.close());

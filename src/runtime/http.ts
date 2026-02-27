@@ -230,6 +230,9 @@ export const createHttpServer = (
           return;
         }
 
+        const requestedSessionKey = typeof body.sessionKey === 'string' ? body.sessionKey.trim() : '';
+        const requestedAlias = typeof body.alias === 'string' ? body.alias.trim() : '';
+
         const inbound: InboundMessage = {
           id: randomId(),
           source: body.source,
@@ -245,6 +248,44 @@ export const createHttpServer = (
           metadata: body.metadata || {},
           receivedAt: new Date().toISOString(),
         };
+
+        let targetSessionKey = '';
+        if (requestedAlias) {
+          const alias = control.resolveAlias(requestedAlias);
+          if (!alias) {
+            writeJson(res, 404, { error: 'alias_not_found' });
+            return;
+          }
+          targetSessionKey = alias.sessionKey;
+        } else if (requestedSessionKey) {
+          targetSessionKey = requestedSessionKey;
+        }
+
+        if (targetSessionKey) {
+          const response = await control.handleSessionRpcCommand(targetSessionKey, {
+            type: 'send',
+            id: randomId(),
+            sessionKey: targetSessionKey,
+            message: inbound.text,
+            mode: 'follow_up',
+          });
+
+          if (!response.success) {
+            writeJson(res, 400, {
+              accepted: false,
+              reason: response.error || 'session_dispatch_failed',
+              sessionKey: targetSessionKey,
+            });
+            return;
+          }
+
+          writeJson(res, 200, {
+            accepted: true,
+            reason: 'enqueued',
+            sessionKey: targetSessionKey,
+          });
+          return;
+        }
 
         const result = await control.dispatch(inbound, {
           reply: async () => {
