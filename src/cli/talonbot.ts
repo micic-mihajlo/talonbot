@@ -282,9 +282,10 @@ const probeRoute = async (route: string): Promise<ProbeResult> => {
 };
 
 const runOperatorSummary = async (asJson: boolean) => {
-  const [health, status, release, sentry] = await Promise.all([
+  const [health, status, workers, release, sentry] = await Promise.all([
     probeRoute('/health'),
     probeRoute('/status'),
+    probeRoute('/workers'),
     probeRoute('/release/status'),
     probeRoute('/sentry/status'),
   ]);
@@ -294,6 +295,7 @@ const runOperatorSummary = async (asJson: boolean) => {
     controlApi: baseUrl,
     health,
     status,
+    workers,
     release,
     sentry,
   };
@@ -320,6 +322,22 @@ const runOperatorSummary = async (asJson: boolean) => {
   } else {
     process.stdout.write(`runtime: unavailable (${status.error})\n`);
     if (status.hint) process.stdout.write(`next: ${status.hint}\n`);
+  }
+
+  if (workers.ok) {
+    const payload = workers.payload as {
+      runtime?: string;
+      activeSessions?: string[];
+      orphanedSessions?: string[];
+    };
+    process.stdout.write(
+      `workers: runtime=${payload.runtime || 'n/a'} active=${payload.activeSessions?.length ?? 0} orphaned=${payload.orphanedSessions?.length ?? 0}\n`,
+    );
+  } else if (workers.error === 'not_configured') {
+    process.stdout.write('workers: not configured\n');
+  } else {
+    process.stdout.write(`workers: unavailable (${workers.error})\n`);
+    if (workers.hint) process.stdout.write(`next: ${workers.hint}\n`);
   }
 
   if (release.ok) {
