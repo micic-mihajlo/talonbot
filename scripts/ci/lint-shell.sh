@@ -4,12 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-if ! command -v rg >/dev/null 2>&1; then
-  echo "lint:shell requires rg (ripgrep)." >&2
-  exit 1
+if command -v rg >/dev/null 2>&1; then
+  mapfile -t shell_files < <(rg -l --hidden --glob '!.git/**' '^#!/usr/bin/env bash' bin scripts install.sh)
+else
+  mapfile -t shell_files < <(grep -RIl --exclude-dir=.git --exclude-dir=node_modules '^#!/usr/bin/env bash' bin scripts install.sh 2>/dev/null || true)
 fi
-
-mapfile -t shell_files < <(rg -l --hidden --glob '!.git/**' '^#!/usr/bin/env bash' bin scripts install.sh)
 
 if [ "${#shell_files[@]}" -eq 0 ]; then
   echo "lint:shell: no bash scripts found"
