@@ -185,6 +185,86 @@ describe('task orchestrator failure + cancellation + fanout', () => {
     expect(orchestrator.getTask(task.id)?.state).toBe('cancelled');
   });
 
+
+  it('re-evaluates fanout parent status after child retries without invalid transitions', async () => {
+    const repoDir = path.join(sandbox, 'repo-fanout-retry');
+    await initGitRepo(repoDir);
+
+    const orchestrator = new TaskOrchestrator(baseConfig(sandbox));
+    orchestrators.push(orchestrator);
+    await orchestrator.initialize();
+
+    await orchestrator.registerRepo({
+      id: 'repo-fanout-retry',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const now = new Date().toISOString();
+    const parent: any = {
+      id: 'parent-1',
+      source: 'operator',
+      text: 'parent',
+      repoId: 'repo-fanout-retry',
+      status: 'failed',
+      state: 'failed',
+      assignedSession: 'task-worker:parent-1',
+      workerSessionKey: 'task-worker:parent-1',
+      retryCount: 0,
+      maxRetries: 1,
+      escalationRequired: true,
+      artifacts: [],
+      children: ['child-a', 'child-b'],
+      events: [],
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    };
+
+    const childA: any = {
+      id: 'child-a',
+      source: 'operator',
+      text: 'child-a',
+      repoId: 'repo-fanout-retry',
+      parentTaskId: 'parent-1',
+      status: 'done',
+      state: 'done',
+      assignedSession: 'task-worker:child-a',
+      workerSessionKey: 'task-worker:child-a',
+      retryCount: 0,
+      maxRetries: 1,
+      escalationRequired: false,
+      artifacts: [],
+      children: [],
+      events: [],
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    };
+
+    const childB: any = {
+      ...childA,
+      id: 'child-b',
+      parentTaskId: 'parent-1',
+      status: 'done',
+      state: 'done',
+    };
+
+    const store = (orchestrator as any).tasks as Map<string, any>;
+    store.set(parent.id, parent);
+    store.set(childA.id, childA);
+    store.set(childB.id, childB);
+
+    expect(() => (orchestrator as any).updateParentState(childB)).not.toThrow();
+    expect((orchestrator as any).getTask(parent.id)?.status).toBe('done');
+
+    childA.status = 'failed';
+    childA.state = 'failed';
+    expect(() => (orchestrator as any).updateParentState(childA)).not.toThrow();
+    expect((orchestrator as any).getTask(parent.id)?.status).toBe('failed');
+  });
   it('completes fanout parent when all children finish', async () => {
     const repoDir = path.join(sandbox, 'repo-fanout');
     await initGitRepo(repoDir);

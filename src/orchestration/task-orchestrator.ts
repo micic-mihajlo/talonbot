@@ -30,8 +30,8 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, Set<TaskStatus>> = {
   queued: new Set(['running', 'cancelled']),
   running: new Set(['queued', 'done', 'failed', 'blocked', 'cancelled']),
   blocked: new Set(['queued', 'failed', 'done']),
-  done: new Set(['queued']),
-  failed: new Set(['queued']),
+  done: new Set(['queued', 'blocked', 'failed']),
+  failed: new Set(['queued', 'blocked', 'done']),
   cancelled: new Set(['queued']),
 };
 
