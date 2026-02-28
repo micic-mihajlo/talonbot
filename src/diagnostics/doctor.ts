@@ -213,6 +213,46 @@ const checkRuntime = async (url: string, issues: StartupIssue[], token?: string)
       'runtime_sessions_probe_failed',
     );
   }
+
+  try {
+    const status = await fetch(`${url.replace(/\/$/, '')}/status`, { headers });
+    if (!status.ok) {
+      return;
+    }
+
+    const payload = (await parseJsonBody(status)) as {
+      orchestration?: {
+        status?: string;
+        metrics?: { issues?: number };
+        issues?: Array<{ severity?: 'warn' | 'error'; code?: string; message?: string }>;
+      };
+    };
+
+    const orchestration = payload.orchestration;
+    if (!orchestration || orchestration.status !== 'degraded') {
+      return;
+    }
+
+    const hasError = (orchestration.issues || []).some((issue) => issue.severity === 'error');
+    const issueCount = orchestration.metrics?.issues ?? orchestration.issues?.length ?? 0;
+    buildIssue(
+      issues,
+      hasError ? 'error' : 'warn',
+      'orchestration',
+      `Runtime orchestration health is degraded (${issueCount} issue${issueCount === 1 ? '' : 's'}).`,
+      'Inspect /status orchestration.issues and clear stale workers/tasks/worktrees before production rollout.',
+      'runtime_orchestration_degraded',
+    );
+  } catch (error) {
+    buildIssue(
+      issues,
+      'warn',
+      'runtime',
+      `Runtime orchestration diagnostics probe failed: ${(error as Error).message}`,
+      'Ensure /status is reachable and authenticated, then rerun doctor with --runtime-token if needed.',
+      'runtime_orchestration_probe_failed',
+    );
+  }
 };
 
 export const gatherDoctorIssues = async (args: DoctorArgs = parseArgs()): Promise<StartupIssue[]> => {

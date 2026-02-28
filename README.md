@@ -155,13 +155,16 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 - `POST /dispatch` or `POST /send`
 - `POST /stop`
 - `POST /alias` with action `set|unset|resolve|list`
-- `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
+- `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `GET /tasks/:id/report`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
 - `GET /repos`, `POST /repos/register`, `POST /repos/remove`
 - `POST /bridge/envelope`, `POST /webhook/github`
 - `GET /bridge/status`
 - `GET /sentry/status`
 - `GET /release/status`, `POST /release/update`, `POST /release/rollback`
 - `POST /audit`, `POST /diagnostics/bundle`
+
+`/status` includes orchestration health diagnostics (orphaned workers, stuck tasks, stale worktrees).
+`/tasks` and `/tasks/:id` include artifact-gated progress reports, and `/tasks/:id/report` returns report-only output.
 
 Example:
 

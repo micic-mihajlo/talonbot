@@ -35,6 +35,9 @@
 - `PR_CHECK_TIMEOUT_MS` default: `900000` (15 min)
 - `PR_CHECK_POLL_MS` default: `15000` (15 sec)
 - `WORKTREE_STALE_HOURS` default: `24`
+- `FAILED_WORKTREE_RETENTION_HOURS` default: `24` (`0` = cleanup failed/blocked worktrees immediately)
+- `TASK_STUCK_MINUTES` default: `30` (running-task stale threshold for orchestration health monitor)
+- `TASK_QUEUE_STALE_MINUTES` default: `30` (queued-task stale threshold for orchestration health monitor)
 
 ## Release / integrity
 

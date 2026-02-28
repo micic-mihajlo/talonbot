@@ -5,22 +5,37 @@ import { tmpdir } from 'node:os';
 import { SentryAgent } from '../src/orchestration/sentry-agent.js';
 import type { TaskRecord } from '../src/orchestration/types.js';
 
-const task = (overrides: Partial<TaskRecord>): TaskRecord => ({
-  id: 'task-1',
-  source: 'operator',
-  text: 'task',
-  repoId: 'repo',
-  state: 'done',
-  workerSessionKey: 'worker-1',
-  retryCount: 0,
-  maxRetries: 1,
-  escalationRequired: false,
-  children: [],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  events: [],
-  ...overrides,
-});
+const task = (overrides: Partial<TaskRecord>): TaskRecord => {
+  const base: TaskRecord = {
+    id: 'task-1',
+    source: 'operator',
+    text: 'task',
+    repoId: 'repo',
+    status: 'done',
+    state: 'done',
+    assignedSession: 'task-worker:task-1',
+    workerSessionKey: 'worker-1',
+    retryCount: 0,
+    maxRetries: 1,
+    escalationRequired: false,
+    artifacts: [],
+    children: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    events: [],
+  };
+  const merged = {
+    ...base,
+    ...overrides,
+  } as TaskRecord;
+  if (overrides.state && !overrides.status) {
+    merged.status = overrides.state;
+  }
+  if (overrides.status && !overrides.state) {
+    merged.state = overrides.status;
+  }
+  return merged;
+};
 
 describe('sentry agent', () => {
   let sandbox = '';

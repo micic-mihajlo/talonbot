@@ -101,11 +101,11 @@ const tryExtractTaskRoute = (pathname: string) => {
     return { id: decodeURIComponent(exact[1]), action: 'get' as const };
   }
 
-  const action = pathname.match(/^\/tasks\/([^/]+)\/(retry|cancel)$/);
+  const action = pathname.match(/^\/tasks\/([^/]+)\/(retry|cancel|report)$/);
   if (action) {
     return {
       id: decodeURIComponent(action[1]),
-      action: action[2] as 'retry' | 'cancel',
+      action: action[2] as 'retry' | 'cancel' | 'report',
     };
   }
 
@@ -131,6 +131,7 @@ export const createHttpServer = (
     if (pathname === '/health' && req.method === 'GET') {
       const releaseStatus = services?.release ? await services.release.status().catch(() => null) : null;
       const tasks = services?.tasks?.listTasks() || [];
+      const orchestration = services?.tasks ? await services.tasks.getHealthStatus().catch(() => null) : null;
       const doneCount = tasks.filter((task) => task.state === 'done').length;
       const failedCount = tasks.filter((task) => task.state === 'failed').length;
       const runningCount = tasks.filter((task) => task.state === 'running').length;
@@ -147,6 +148,7 @@ export const createHttpServer = (
                 running: runningCount,
                 done: doneCount,
                 failed: failedCount,
+                orchestration,
               }
             : null,
           release: releaseStatus
@@ -171,6 +173,7 @@ export const createHttpServer = (
 
     if (req.method === 'GET' && pathname === '/status') {
       if (!requireAuth(req, config, res)) return;
+      const orchestration = services?.tasks ? await services.tasks.getHealthStatus().catch(() => null) : null;
       writeJson(res, 200, {
         status: 'ok',
         uptime: process.uptime(),
@@ -191,6 +194,7 @@ export const createHttpServer = (
         },
         sessions: control.listSessions(),
         aliases: control.listAliases(),
+        orchestration,
       });
       return;
     }
@@ -430,7 +434,13 @@ export const createHttpServer = (
       const state = url.searchParams.get('state');
       const tasks = services.tasks.listTasks();
       const filtered = state ? tasks.filter((task) => task.state === state) : tasks;
-      writeJson(res, 200, { tasks: filtered });
+      const reports = services.tasks.listTaskReports(filtered.map((task) => task.id));
+      writeJson(res, 200, {
+        tasks: filtered.map((task, index) => ({
+          ...task,
+          report: reports[index],
+        })),
+      });
       return;
     }
 
@@ -484,7 +494,19 @@ export const createHttpServer = (
           writeJson(res, 404, { error: 'task_not_found' });
           return;
         }
-        writeJson(res, 200, { task });
+        const report = services.tasks.buildTaskReport(taskRoute.id);
+        writeJson(res, 200, { task, report });
+        return;
+      }
+
+      if (taskRoute.action === 'report' && req.method === 'GET') {
+        const task = services.tasks.getTask(taskRoute.id);
+        if (!task) {
+          writeJson(res, 404, { error: 'task_not_found' });
+          return;
+        }
+        const report = services.tasks.buildTaskReport(taskRoute.id);
+        writeJson(res, 200, { report });
         return;
       }
 

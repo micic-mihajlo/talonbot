@@ -5,7 +5,7 @@ import type { TaskRecord } from './types.js';
 export interface SentryIncident {
   taskId: string;
   repoId: string;
-  state: TaskRecord['state'];
+  state: TaskRecord['status'];
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -68,13 +68,13 @@ export class SentryAgent {
 
     for (const task of tasks) {
       if (!task.escalationRequired) continue;
-      if (task.state !== 'failed' && task.state !== 'blocked') continue;
+      if (task.status !== 'failed' && task.status !== 'blocked') continue;
       if (this.seen.has(task.id)) continue;
 
       const incident: SentryIncident = {
         taskId: task.id,
         repoId: task.repoId,
-        state: task.state,
+        state: task.status,
         error: task.error,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
