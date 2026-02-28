@@ -95,6 +95,19 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     );
   }
 
+  if (config.TALONBOT_SECRET_ALLOW_COMMAND) {
+    issues.push(
+      issue({
+        severity: 'warn',
+        area: 'security',
+        message: 'TALONBOT_SECRET_ALLOW_COMMAND=true enables command execution for secret loading.',
+        remediation:
+          'Prefer *_FILE for production secrets when possible. If command backend is required, keep command paths absolute and tightly controlled.',
+        code: 'secret_command_backend_enabled',
+      }),
+    );
+  }
+
   if (config.ENGINE_MODE === 'process' && !config.ENGINE_COMMAND.trim()) {
     issues.push(
       issue({

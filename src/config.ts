@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { config as loadDotenv, type DotenvParseOutput } from 'dotenv';
 import { z, type ZodIssue } from 'zod';
+import { applyConfigSecretResolution } from './security/secrets.js';
 
 const bool = z.preprocess((value) => {
   if (typeof value === 'boolean') return value;
@@ -83,6 +84,10 @@ const schemaBase = z.object({
   DISCORD_ALLOWED_CHANNELS: z.string().default(''),
   DISCORD_ALLOWED_GUILDS: z.string().default(''),
   DISCORD_ALLOWED_USERS: z.string().default(''),
+
+  TALONBOT_SECRET_ALLOW_COMMAND: bool.default(false),
+  TALONBOT_SECRET_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(100).max(120000).default(3000),
+  TALONBOT_SECRET_MAX_BYTES: z.coerce.number().int().min(64).max(1024 * 1024).default(8192),
 });
 
 export const appConfigSchema = schemaBase.superRefine((input, ctx) => {
@@ -150,6 +155,7 @@ const pickConfigValues = (env: NodeJS.ProcessEnv): SchemaInput => {
 
 const envFilePath = process.env.TALONBOT_ENV_FILE || path.join(process.cwd(), '.env');
 const dotenvOutput = loadDotenv({ path: envFilePath });
+applyConfigSecretResolution(process.env);
 if (dotenvOutput.error && (dotenvOutput.error as NodeJS.ErrnoException).code !== 'ENOENT') {
   throw new Error(`Unable to load config file ${envFilePath}: ${dotenvOutput.error.message}`);
 }

@@ -6,6 +6,7 @@
 - Protect control endpoints with `CONTROL_AUTH_TOKEN`.
 - Keep repo checkout and runtime data in separate directories.
 - Use release snapshots and integrity checks before activation.
+- Prefer `*_FILE` secret backends over command-based secret loading.
 
 ## Trust boundaries
 
@@ -39,6 +40,7 @@ npm run cli -- audit --deep
 - Worker execution uses shell and external tools; isolation must be enforced at OS level.
 - Secrets can still leak through third-party tools if endpoint policy is weak.
 - Bridge signatures are optional unless `BRIDGE_SHARED_SECRET` is configured.
+- Enabling `TALONBOT_SECRET_ALLOW_COMMAND=true` increases attack surface; keep command paths absolute and tightly scoped.
 
 ## Required production baseline
 

@@ -109,6 +109,20 @@ Enable one transport when you’re ready to connect real chat:
 
 Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-like control-plane usage.
 
+### Secret backend options
+
+Secrets can be loaded from:
+
+- direct env value (`KEY=value`, default),
+- a file (`KEY_FILE=/absolute/path`),
+- a command (`KEY_COMMAND=["/absolute/executable","arg1"]`).
+
+Optional selector: `KEY_BACKEND=env|file|command`.
+
+Supported keys: `CONTROL_AUTH_TOKEN`, `BRIDGE_SHARED_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `DISCORD_TOKEN`.
+
+Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_ALLOW_COMMAND=true`.
+
 - `GET /health`
 - `GET /status`
 - `GET /sessions`

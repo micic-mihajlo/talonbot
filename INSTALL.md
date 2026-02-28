@@ -19,6 +19,12 @@ Set environment variables before running if you want different defaults:
 - `SERVICE_USER` (daemon mode, defaults to your user)
 - any transport secrets/tokens.
 
+Secret loading options:
+
+- default: `KEY=value` in `.env`
+- file backend: `KEY_FILE=/absolute/path/to/secret`
+- command backend: `KEY_COMMAND=["/absolute/executable","arg1"]` with `TALONBOT_SECRET_ALLOW_COMMAND=true`
+
 ## Local smoke test
 
 ```bash

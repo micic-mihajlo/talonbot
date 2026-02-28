@@ -21,6 +21,18 @@ describe('startup validation', () => {
     expect(issue ? formatStartupIssue(issue) : '').toContain('Remediation:');
   });
 
+  it('warns when secret command backend is enabled', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      TALONBOT_SECRET_ALLOW_COMMAND: true,
+      DATA_DIR: '/tmp/talonbot-check-data',
+      CONTROL_SOCKET_PATH: '/tmp/talonbot-check.sock',
+    });
+
+    const issue = issues.find((entry) => entry.code === 'secret_command_backend_enabled');
+    expect(issue?.severity).toBe('warn');
+  });
+
   it('errors when process mode has empty command', () => {
     const issues = validateStartupConfig({
       ...defaultConfig,

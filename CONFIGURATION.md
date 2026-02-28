@@ -51,6 +51,37 @@
 - `SENTRY_POLL_MS` default: `10000`
 - `SENTRY_STATE_FILE` default: `<DATA_DIR>/sentry/incidents.jsonl`
 
+## Secret backends (P0)
+
+Sensitive keys support three backends:
+
+- `env` (default): `KEY=value`
+- `file`: `KEY_FILE=/absolute/path/to/secret`
+- `command`: `KEY_COMMAND=["/absolute/executable","arg1","arg2"]`
+
+Optional override: `KEY_BACKEND=env|file|command`
+
+Supported keys:
+
+- `CONTROL_AUTH_TOKEN`
+- `BRIDGE_SHARED_SECRET`
+- `SLACK_BOT_TOKEN`
+- `SLACK_APP_TOKEN`
+- `SLACK_SIGNING_SECRET`
+- `DISCORD_TOKEN`
+
+Safety controls:
+
+- `TALONBOT_SECRET_ALLOW_COMMAND` default: `false`
+- `TALONBOT_SECRET_COMMAND_TIMEOUT_MS` default: `3000`
+- `TALONBOT_SECRET_MAX_BYTES` default: `8192`
+
+Notes:
+
+- `*_FILE` paths must be absolute and point to readable files.
+- `*_COMMAND` must be a JSON argv array; `argv[0]` must be an absolute executable path.
+- Trailing newlines from file/command output are stripped.
+
 ## Transport toggles
 
 - `SLACK_ENABLED` / `DISCORD_ENABLED`
