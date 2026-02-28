@@ -1,13 +1,30 @@
-export type TaskState = 'queued' | 'running' | 'blocked' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'queued' | 'running' | 'blocked' | 'done' | 'failed' | 'cancelled';
+export type TaskState = TaskStatus;
+
+export type TaskArtifactKind =
+  | 'launcher'
+  | 'summary'
+  | 'file_changes'
+  | 'git_commit'
+  | 'pull_request'
+  | 'checks'
+  | 'test_output'
+  | 'error'
+  | 'no_artifact';
 
 export interface TaskArtifact {
-  summary: string;
+  kind: TaskArtifactKind;
+  at: string;
+  summary?: string;
   worktreePath?: string;
   branch?: string;
   commitSha?: string;
   prUrl?: string;
   checksSummary?: string;
   checksPassed?: boolean;
+  filesChanged?: string[];
+  testOutput?: string;
+  details?: Record<string, string>;
 }
 
 export interface TaskEvent {
@@ -24,12 +41,17 @@ export interface TaskRecord {
   source: 'transport' | 'webhook' | 'operator' | 'system';
   text: string;
   repoId: string;
+  status: TaskStatus;
   state: TaskState;
+  assignedSession: string;
   workerSessionKey: string;
+  worktreePath?: string;
+  branch?: string;
   retryCount: number;
   maxRetries: number;
   escalationRequired: boolean;
   error?: string;
+  artifacts: TaskArtifact[];
   artifact?: TaskArtifact;
   children: string[];
   createdAt: string;
@@ -74,5 +96,24 @@ export interface WorktreeInfo {
 }
 
 export interface TaskSnapshot {
+  version?: number;
   tasks: TaskRecord[];
+}
+
+export interface TaskProgressReport {
+  taskId: string;
+  status: TaskStatus;
+  artifactState: 'artifact-backed' | 'no-artifact';
+  generatedAt: string;
+  message: string;
+  evidence: {
+    assignedSession?: string;
+    branch?: string;
+    worktreePath?: string;
+    commitSha?: string;
+    prUrl?: string;
+    checksSummary?: string;
+    filesChanged?: string[];
+    testOutput?: string;
+  };
 }

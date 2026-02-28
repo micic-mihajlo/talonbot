@@ -23,6 +23,16 @@ export interface PullRequestCheckState {
 }
 
 export class GitHubAutomation {
+  async listChangedFiles(worktreePath: string): Promise<string[]> {
+    const status = await this.git(worktreePath, ['status', '--porcelain']);
+    return status.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.slice(3).trim())
+      .filter(Boolean);
+  }
+
   async commitAll(worktreePath: string, message: string): Promise<string | null> {
     const status = await this.git(worktreePath, ['status', '--porcelain']);
     if (!status.stdout.trim()) {
