@@ -238,6 +238,8 @@ npm run cli -- bundle --output /tmp
 npm run cli -- uninstall --force
 ```
 
+Diagnostics bundles now include worker-plane/runtime artifacts (`workers.json`, `orchestration-health.json`) alongside sessions/tasks/release/audit data.
+
 Equivalent direct usage (after daemon install):
 
 ```bash

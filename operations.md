@@ -30,6 +30,9 @@ npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default 
 npm run cli -- tasks create --repo my-repo --text "Fix flaky CI"
 npm run cli -- tasks list
 npm run cli -- tasks get <task-id>
+npm run cli -- workers list
+npm run cli -- workers cleanup
+npm run cli -- workers stop --session <worker-session>
 npm run cli -- attach --session <session-key>
 ```
 

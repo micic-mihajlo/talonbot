@@ -41,6 +41,10 @@ export const createDiagnosticsBundle = async (input: {
   if (input.tasks) {
     await fs.writeFile(path.join(bundleDir, 'tasks.json'), safeJson(input.tasks.listTasks()), { encoding: 'utf8' });
     await fs.writeFile(path.join(bundleDir, 'repos.json'), safeJson(input.tasks.listRepos()), { encoding: 'utf8' });
+    await fs.writeFile(path.join(bundleDir, 'workers.json'), safeJson(await input.tasks.getWorkerRuntimeSnapshot()), { encoding: 'utf8' });
+    await fs.writeFile(path.join(bundleDir, 'orchestration-health.json'), safeJson(await input.tasks.getHealthStatus()), {
+      encoding: 'utf8',
+    });
   }
 
   if (input.release) {
