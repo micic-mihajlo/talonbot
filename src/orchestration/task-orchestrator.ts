@@ -23,6 +23,9 @@ import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
 const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'failed', 'blocked', 'cancelled']);
+
+const isErrnoException = (error: unknown): error is NodeJS.ErrnoException =>
+  typeof error === 'object' && error !== null && 'code' in error;
 const ALLOWED_TRANSITIONS: Record<TaskStatus, Set<TaskStatus>> = {
   queued: new Set(['running', 'cancelled']),
   running: new Set(['queued', 'done', 'failed', 'blocked', 'cancelled']),
@@ -1035,16 +1038,33 @@ export class TaskOrchestrator {
   }
 
   private async persist() {
-    await fs.mkdir(path.dirname(this.taskFile), { recursive: true });
-
     const payload: TaskSnapshot = {
       version: 2,
       tasks: this.listTasks(),
     };
 
-    const tmp = `${this.taskFile}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(payload, null, 2), { encoding: 'utf8' });
-    await fs.rename(tmp, this.taskFile);
+    const writeSnapshot = async () => {
+      await fs.mkdir(path.dirname(this.taskFile), { recursive: true });
+      const tmp = `${this.taskFile}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(payload, null, 2), { encoding: 'utf8' });
+      await fs.rename(tmp, this.taskFile);
+    };
+
+    try {
+      await writeSnapshot();
+      this.healthCache = undefined;
+      return;
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+
+      if (this.stopping) {
+        return;
+      }
+    }
+
+    await writeSnapshot();
     this.healthCache = undefined;
   }
 
