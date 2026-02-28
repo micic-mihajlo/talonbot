@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { SerialQueue } from '../utils/queue.js';
 import type { RunnerCallbacks, InboundMessage } from '../shared/protocol.js';
 import type { AgentEngine } from '../engine/types.js';
@@ -31,6 +33,24 @@ interface SessionState {
   turnIndex: number;
   lastProcessedMessageId?: string;
 }
+
+const execFileAsync = promisify(execFile);
+
+const GITHUB_PR_URL_RE = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/gi;
+
+const verifyGitHubPullRequestUrl = async (url: string): Promise<boolean> => {
+  try {
+    await execFileAsync('gh', ['pr', 'view', url, '--json', 'url'], {
+      timeout: 10000,
+      windowsHide: true,
+      maxBuffer: 64 * 1024,
+      encoding: 'utf8',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const DEFAULT_SUMMARY_PROMPT =
   `Summarize what happened in this conversation since the last user prompt. ` +
@@ -157,6 +177,28 @@ export class AgentSession {
     }
   }
 
+
+  private async enforceArtifactClaims(text: string) {
+    const matches = text.match(GITHUB_PR_URL_RE) || [];
+    if (matches.length === 0) {
+      return text;
+    }
+
+    for (const url of new Set(matches)) {
+      const ok = await verifyGitHubPullRequestUrl(url);
+      if (!ok) {
+        this.logger.warn('blocked unverified PR claim in assistant output', {
+          sessionKey: this.key,
+          routeKey: this.routeKey,
+          prUrl: url,
+        });
+        return `I can’t verify that PR URL yet, so I’m not going to claim it’s ready. I’ll share a verified PR link once it exists.`;
+      }
+    }
+
+    return text;
+  }
+
   private appendHistory(role: 'user' | 'assistant', content: string, at: string) {
     const text = content.trim();
     if (!text) {
@@ -197,18 +239,19 @@ export class AgentSession {
 
     try {
       const result = await this.engine.complete(engineInput, aborter.signal);
+      const safeText = await this.enforceArtifactClaims(result.text);
       const assistantMessage = {
         role: 'assistant' as const,
-        content: result.text,
+        content: safeText,
         timestamp: Date.now(),
       };
       await this.store.appendLine(this.key, 'context.jsonl', {
         kind: 'assistant',
-        text: result.text,
+        text: safeText,
         at: new Date().toISOString(),
       });
-      this.appendHistory('assistant', result.text, new Date().toISOString());
-      await this.callbacks.reply(result.text);
+      this.appendHistory('assistant', safeText, new Date().toISOString());
+      await this.callbacks.reply(safeText);
       this.state.lastActiveAt = new Date().toISOString();
       this.state.lastProcessedMessageId = event.id;
       void this.store.writeSessionState(this.key, this.state);
