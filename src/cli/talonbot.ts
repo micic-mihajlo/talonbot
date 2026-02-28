@@ -356,6 +356,7 @@ const help = () => {
   process.stdout.write('  doctor\n');
   process.stdout.write('  env get|set|list|sync\n');
   process.stdout.write('  tasks list|get|create|retry|cancel\n');
+  process.stdout.write('  workers list|cleanup|stop [--session <workerSession>]\n');
   process.stdout.write('  repos list|register|remove\n');
   process.stdout.write('  deploy|update [--source <path>]\n');
   process.stdout.write('  rollback [target]\n');
@@ -526,6 +527,34 @@ const main = async () => {
     }
 
     fail(`unknown tasks command: ${sub}`, 'Use: tasks list|get|create|retry|cancel');
+  }
+
+  if (command === 'workers') {
+    const sub = args[0] || 'list';
+
+    if (sub === 'list') {
+      json(await request('GET', '/workers'));
+      return;
+    }
+
+    if (sub === 'cleanup') {
+      json(await request('POST', '/workers/cleanup'));
+      return;
+    }
+
+    if (sub === 'stop') {
+      const session = getFlag(args, 'session') || args[1];
+      if (!session) {
+        fail(
+          'workers stop requires --session <workerSession>',
+          'Example: talonbot workers stop --session dev-agent-my-repo-task-1234',
+        );
+      }
+      json(await request('POST', `/workers/${encodeURIComponent(session)}/stop`));
+      return;
+    }
+
+    fail(`unknown workers command: ${sub}`, 'Use: workers list|cleanup|stop');
   }
 
   if (command === 'repos') {

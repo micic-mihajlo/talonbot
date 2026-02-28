@@ -112,6 +112,18 @@ const tryExtractTaskRoute = (pathname: string) => {
   return null;
 };
 
+const tryExtractWorkerRoute = (pathname: string) => {
+  const stop = pathname.match(/^\/workers\/([^/]+)\/stop$/);
+  if (stop) {
+    return {
+      session: decodeURIComponent(stop[1]),
+      action: 'stop' as const,
+    };
+  }
+
+  return null;
+};
+
 export const createHttpServer = (
   control: ControlPlane,
   config: AppConfig,
@@ -477,6 +489,52 @@ export const createHttpServer = (
       } catch (error) {
         writeJson(res, 400, { error: (error as Error).message });
       }
+      return;
+    }
+
+    if (pathname === '/workers' && req.method === 'GET') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+
+      const workers = await services.tasks.getWorkerRuntimeSnapshot();
+      writeJson(res, 200, workers);
+      return;
+    }
+
+    if (pathname === '/workers/cleanup' && req.method === 'POST') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+
+      const cleanup = await services.tasks.cleanupOrphanedWorkers();
+      writeJson(res, 200, cleanup);
+      return;
+    }
+
+    const workerRoute = tryExtractWorkerRoute(pathname);
+    if (workerRoute) {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+
+      if (workerRoute.action === 'stop' && req.method === 'POST') {
+        try {
+          const stopped = await services.tasks.stopWorkerSession(workerRoute.session);
+          writeJson(res, 200, stopped);
+        } catch (error) {
+          writeJson(res, 400, { error: (error as Error).message });
+        }
+        return;
+      }
+
+      writeJson(res, 405, { error: 'method_not_allowed' });
       return;
     }
 

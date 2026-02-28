@@ -81,6 +81,40 @@ interface TransitionInput {
   details?: Record<string, unknown>;
 }
 
+export interface WorkerRuntimeTaskStatus {
+  taskId: string;
+  repoId: string;
+  status: TaskStatus;
+  session: string;
+  worktreePath?: string;
+  branch?: string;
+  startedAt?: string;
+}
+
+export interface WorkerRuntimeSnapshot {
+  runtime: 'inline' | 'tmux';
+  sessionPrefix: string;
+  activeTasks: WorkerRuntimeTaskStatus[];
+  activeSessions: string[];
+  tmuxSessions: string[];
+  orphanedSessions: string[];
+}
+
+export interface WorkerCleanupReport {
+  runtime: 'inline' | 'tmux';
+  scanned: number;
+  killed: string[];
+  kept: string[];
+  reason?: string;
+}
+
+export interface WorkerStopReport {
+  session: string;
+  taskId?: string;
+  cancelRequested: boolean;
+  tmuxStopped: boolean;
+}
+
 export class TaskOrchestrator {
   private readonly tasks = new Map<string, TaskRecord>();
   private readonly queue: string[] = [];
@@ -164,6 +198,115 @@ export class TaskOrchestrator {
     };
 
     return snapshot;
+  }
+
+  async getWorkerRuntimeSnapshot(): Promise<WorkerRuntimeSnapshot> {
+    const activeTasks = Array.from(this.tasks.values())
+      .filter((task) => task.status === 'running' && task.assignedSession)
+      .map((task) => ({
+        taskId: task.id,
+        repoId: task.repoId,
+        status: task.status,
+        session: task.assignedSession,
+        worktreePath: task.worktreePath,
+        branch: task.branch,
+        startedAt: task.startedAt,
+      }));
+    const activeSessions = Array.from(new Set(activeTasks.map((task) => task.session)));
+
+    if (this.config.WORKER_RUNTIME !== 'tmux') {
+      return {
+        runtime: 'inline',
+        sessionPrefix: this.config.WORKER_SESSION_PREFIX,
+        activeTasks,
+        activeSessions,
+        tmuxSessions: [],
+        orphanedSessions: [],
+      };
+    }
+
+    const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+    const tmuxSessions = await this.launcher
+      .listTmuxSessions()
+      .then((sessions) => sessions.filter((session) => session.startsWith(sessionPrefix)));
+    const activeSessionSet = new Set(activeSessions);
+    const orphanedSessions = tmuxSessions.filter((session) => !activeSessionSet.has(session));
+
+    return {
+      runtime: 'tmux',
+      sessionPrefix: this.config.WORKER_SESSION_PREFIX,
+      activeTasks,
+      activeSessions,
+      tmuxSessions,
+      orphanedSessions,
+    };
+  }
+
+  async cleanupOrphanedWorkers(): Promise<WorkerCleanupReport> {
+    if (this.config.WORKER_RUNTIME !== 'tmux') {
+      return {
+        runtime: 'inline',
+        scanned: 0,
+        killed: [],
+        kept: [],
+        reason: 'WORKER_RUNTIME is inline',
+      };
+    }
+
+    const snapshot = await this.getWorkerRuntimeSnapshot();
+    const activeSet = new Set(snapshot.activeSessions);
+    const killed: string[] = [];
+    const kept: string[] = [];
+
+    for (const session of snapshot.tmuxSessions) {
+      if (activeSet.has(session)) {
+        kept.push(session);
+        continue;
+      }
+      await this.launcher.killTmuxSession(session).catch(() => undefined);
+      killed.push(session);
+    }
+
+    await this.runMaintenance(true);
+    return {
+      runtime: 'tmux',
+      scanned: snapshot.tmuxSessions.length,
+      killed,
+      kept,
+    };
+  }
+
+  async stopWorkerSession(sessionKey: string): Promise<WorkerStopReport> {
+    const target = sessionKey.trim();
+    if (!target) {
+      throw new Error('worker_session_required');
+    }
+
+    const runningTask = Array.from(this.tasks.values()).find((task) => task.status === 'running' && task.assignedSession === target);
+    let cancelRequested = false;
+    if (runningTask) {
+      cancelRequested = await this.cancelTask(runningTask.id);
+    }
+
+    let tmuxStopped = false;
+    if (this.config.WORKER_RUNTIME === 'tmux') {
+      const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+      if (!target.startsWith(sessionPrefix)) {
+        throw new Error('worker_session_out_of_scope');
+      }
+      const sessions = await this.launcher.listTmuxSessions().catch((): string[] => []);
+      if (sessions.includes(target)) {
+        await this.launcher.killTmuxSession(target).catch(() => undefined);
+        tmuxStopped = true;
+      }
+    }
+
+    return {
+      session: target,
+      taskId: runningTask?.id,
+      cancelRequested,
+      tmuxStopped,
+    };
   }
 
   async submitTask(input: SubmitTaskInput) {

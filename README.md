@@ -156,6 +156,7 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 - `POST /stop`
 - `POST /alias` with action `set|unset|resolve|list`
 - `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `GET /tasks/:id/report`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
+- `GET /workers`, `POST /workers/cleanup`, `POST /workers/:session/stop`
 - `GET /repos`, `POST /repos/register`, `POST /repos/remove`
 - `POST /bridge/envelope`, `POST /webhook/github`
 - `GET /bridge/status`
@@ -228,6 +229,7 @@ npm run cli -- env get CONTROL_AUTH_TOKEN
 npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default true
 npm run cli -- tasks create --repo my-repo --text "Implement endpoint hardening"
 npm run cli -- tasks list
+npm run cli -- workers list
 npm run cli -- attach --session discord:12345:main
 npm run cli -- deploy --source /path/to/talonbot
 npm run cli -- rollback previous
