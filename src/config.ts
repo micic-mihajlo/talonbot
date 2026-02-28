@@ -130,6 +130,13 @@ type SchemaOutput = z.output<typeof appConfigSchema>;
 const CONFIG_KEYS = Object.keys(schemaBase.shape) as Array<keyof SchemaInput>;
 const KNOWN_CONFIG_KEYS = new Set<string>(CONFIG_KEYS as string[]);
 
+const ALLOWED_FOREIGN_ENV_KEYS = new Set<string>([
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'MINIMAX_API_KEY',
+  'CEREBRAS_API_KEY',
+]);
+
 const formatIssue = (issue: ZodIssue) => {
   const key = issue.path.length > 0 ? issue.path.join('.') : '(root)';
   return `${key}: ${issue.message}`;
@@ -141,7 +148,7 @@ export const formatConfigSchemaIssues = (issues: ZodIssue[]): string =>
 const unknownDotenvKeys = (input: DotenvParseOutput | undefined): string[] => {
   if (!input) return [];
   return Object.keys(input)
-    .filter((key) => !KNOWN_CONFIG_KEYS.has(key))
+    .filter((key) => !KNOWN_CONFIG_KEYS.has(key) && !ALLOWED_FOREIGN_ENV_KEYS.has(key))
     .sort();
 };
 
