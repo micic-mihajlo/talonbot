@@ -44,6 +44,17 @@ For an always-on Linux host with systemd:
 talonbot install --daemon --doctor
 ```
 
+## Optional: quick web scraping with Scrapling
+
+`talonbot` can bootstrap a local Scrapling Python environment on first use:
+
+```bash
+talonbot scrape https://example.com
+talonbot scrape https://example.com --selector 'h1'
+```
+
+It installs Scrapling into `~/.local/share/talonbot/scrapling-venv` automatically.
+
 ## Discord-first quickstart
 
 If Discord is your primary transport:

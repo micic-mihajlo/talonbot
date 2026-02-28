@@ -9,6 +9,27 @@ if [ "${1:-}" = "install" ]; then
   exec "$ROOT_DIR/install.sh" "$@"
 fi
 
+if [ "${1:-}" = "scrape" ]; then
+  shift
+  SCRAPLING_VENV="${SCRAPLING_VENV:-$HOME/.local/share/talonbot/scrapling-venv}"
+  PYTHON_BIN="$SCRAPLING_VENV/bin/python"
+
+  if [ ! -x "$PYTHON_BIN" ]; then
+    mkdir -p "$(dirname "$SCRAPLING_VENV")"
+    if python3 -m venv "$SCRAPLING_VENV" >/dev/null 2>&1; then
+      "$SCRAPLING_VENV/bin/pip" install --upgrade pip >/dev/null
+      "$SCRAPLING_VENV/bin/pip" install scrapling >/dev/null
+    else
+      # fallback when python3-venv is unavailable on host
+      python3 -m pip install --user --upgrade pip >/dev/null
+      python3 -m pip install --user scrapling >/dev/null
+      PYTHON_BIN="python3"
+    fi
+  fi
+
+  exec "$PYTHON_BIN" "$ROOT_DIR/scripts/scrape_with_scrapling.py" "$@"
+fi
+
 if [ ! -d "node_modules" ]; then
   npm install >/dev/null
 fi
