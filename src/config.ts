@@ -47,6 +47,10 @@ const schemaBase = z.object({
   ENGINE_PROVIDER: z.string().default(''),
   ENGINE_CWD: z.string().default('~/.local/share/talonbot/engine'),
   ENGINE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120000),
+  WORKER_RUNTIME: z.enum(['inline', 'tmux']).default('inline'),
+  WORKER_SESSION_PREFIX: z.string().default('dev-agent'),
+  TMUX_BINARY: z.string().default('tmux'),
+  WORKER_TMUX_POLL_MS: z.coerce.number().int().min(100).max(60000).default(500),
 
   REPO_ROOT_DIR: z.string().default('~/workspace'),
   WORKTREE_ROOT_DIR: z.string().default('~/workspace/worktrees'),
@@ -109,6 +113,14 @@ export const appConfigSchema = schemaBase.superRefine((input, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['TASK_AUTO_PR'],
       message: 'TASK_AUTO_PR=true requires TASK_AUTO_COMMIT=true.',
+    });
+  }
+
+  if (input.WORKER_RUNTIME === 'tmux' && input.ENGINE_MODE !== 'process') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['WORKER_RUNTIME'],
+      message: 'WORKER_RUNTIME=tmux requires ENGINE_MODE=process.',
     });
   }
 

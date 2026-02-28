@@ -8,6 +8,7 @@
 - Boolean vars must be explicit: `true/false`, `1/0`, `yes/no`, or `on/off`.
 - Cross-field constraints fail fast:
   - `ENGINE_MODE=process` requires non-empty `ENGINE_COMMAND`.
+  - `WORKER_RUNTIME=tmux` requires `ENGINE_MODE=process`.
   - `SLACK_ENABLED=true` requires all three Slack secrets.
   - `DISCORD_ENABLED=true` requires `DISCORD_TOKEN`.
   - `TASK_AUTO_PR=true` requires `TASK_AUTO_COMMIT=true`.
@@ -22,6 +23,10 @@
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
 - `ENGINE_PROVIDER` optional explicit provider override passed to engine process (appended as `--provider`).
 - `ENGINE_MODEL` optional explicit model override passed to engine process (appended as `--model`).
+- `WORKER_RUNTIME` values: `inline`, `tmux` (default `inline`)
+- `WORKER_SESSION_PREFIX` default: `dev-agent`
+- `TMUX_BINARY` default: `tmux` (required when `WORKER_RUNTIME=tmux`)
+- `WORKER_TMUX_POLL_MS` default: `500`
 
 ## Orchestration
 

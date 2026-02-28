@@ -131,6 +131,31 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     );
   }
 
+  if (config.WORKER_RUNTIME === 'tmux') {
+    if (!commandExists(config.TMUX_BINARY)) {
+      issues.push(
+        issue({
+          severity: 'error',
+          area: 'orchestration',
+          message: `TMUX_BINARY "${config.TMUX_BINARY}" is not executable or not on PATH.`,
+          remediation: 'Install tmux or set TMUX_BINARY to an absolute tmux path.',
+          code: 'tmux_binary_not_found',
+        }),
+      );
+    }
+    if (config.ENGINE_MODE !== 'process') {
+      issues.push(
+        issue({
+          severity: 'error',
+          area: 'orchestration',
+          message: 'WORKER_RUNTIME=tmux requires ENGINE_MODE=process.',
+          remediation: 'Set ENGINE_MODE=process when enabling tmux worker runtime.',
+          code: 'tmux_runtime_engine_mode_mismatch',
+        }),
+      );
+    }
+  }
+
   if (config.TASK_AUTO_PR && !config.TASK_AUTO_COMMIT) {
     issues.push(
       issue({
