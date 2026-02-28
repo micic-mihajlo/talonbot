@@ -52,6 +52,19 @@ const verifyGitHubPullRequestUrl = async (url: string): Promise<boolean> => {
   }
 };
 
+const hasVerifiedGitHubPrUrl = async (text: string): Promise<boolean> => {
+  const matches = text.match(GITHUB_PR_URL_RE) || [];
+  if (matches.length === 0) return false;
+
+  for (const url of new Set(matches)) {
+    if (await verifyGitHubPullRequestUrl(url)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const DEFAULT_SUMMARY_PROMPT =
   `Summarize what happened in this conversation since the last user prompt. ` +
   'Include decisions, files touched, command outcomes, and blockers.';
@@ -71,6 +84,7 @@ export class AgentSession {
   private stopped = false;
   private currentAbort?: AbortController;
   private running = false;
+  private requireVerifiedPrForReplies = false;
 
   constructor(
     private readonly key: string,
@@ -223,6 +237,10 @@ export class AgentSession {
     this.currentAbort = aborter;
     this.appendHistory('user', normalizedText, new Date(event.receivedAt).toISOString());
 
+    if (/don't message me back without the pr url|ping me when you're done|work, don't message/i.test(normalizedText)) {
+      this.requireVerifiedPrForReplies = true;
+    }
+
     const engineInput = {
       sessionKey: this.key,
       route: this.routeKey,
@@ -251,6 +269,27 @@ export class AgentSession {
         at: new Date().toISOString(),
       });
       this.appendHistory('assistant', safeText, new Date().toISOString());
+      if (this.requireVerifiedPrForReplies) {
+        const hasVerifiedPr = await hasVerifiedGitHubPrUrl(safeText);
+        if (!hasVerifiedPr) {
+          this.logger.info('suppressed assistant reply until verified PR URL is available', {
+            sessionKey: this.key,
+            routeKey: this.routeKey,
+          });
+          this.state.lastActiveAt = new Date().toISOString();
+          this.state.lastProcessedMessageId = event.id;
+          void this.store.writeSessionState(this.key, this.state);
+          this.running = false;
+          this.currentAbort = undefined;
+          this.emitTurnEnd({
+            message: null,
+            turnIndex,
+          });
+          return;
+        }
+        this.requireVerifiedPrForReplies = false;
+      }
+
       await this.callbacks.reply(safeText);
       this.state.lastActiveAt = new Date().toISOString();
       this.state.lastProcessedMessageId = event.id;
