@@ -146,7 +146,7 @@ const unknownDotenvKeys = (input: DotenvParseOutput | undefined): string[] => {
 };
 
 const pickConfigValues = (env: NodeJS.ProcessEnv): SchemaInput => {
-  const output: Partial<SchemaInput> = {};
+  const output: Record<string, string | undefined> = {};
   for (const key of CONFIG_KEYS) {
     output[key] = env[key];
   }
