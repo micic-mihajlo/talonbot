@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ "${1:-}" = "install" ]; then
+  shift
+  exec "$ROOT_DIR/install.sh" "$@"
+fi
+
+if [ ! -d "node_modules" ]; then
+  npm install >/dev/null
+fi
+
 if [ ! -f "dist/cli/talonbot.js" ]; then
   npm run build >/dev/null
 fi

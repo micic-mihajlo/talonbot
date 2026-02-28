@@ -19,6 +19,7 @@
     "test:release": "vitest run test/release-endpoints.test.ts test/platform-capabilities.test.ts test/platform-resilience.test.ts",
     "test:shell": "vitest run test/shell-ops.test.ts",
     "test:smoke": "bash scripts/ci/smoke-runtime.sh",
+    "test:smoke:bootstrap": "bash scripts/ci/smoke-bootstrap-install.sh",
     "test:watch": "vitest",
     "ci:p0": "npm run build && npm run lint && npm run typecheck && npm run test && npm run test:smoke",
     "ci": "npm run ci:p0",

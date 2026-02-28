@@ -348,6 +348,7 @@ const runOperatorSummary = async (asJson: boolean) => {
 const help = () => {
   process.stdout.write('talonbot CLI\n\n');
   process.stdout.write('Commands:\n');
+  process.stdout.write('  install [--daemon] [--doctor] [--start] [--token <value>] [--generate-token]\n');
   process.stdout.write('  start|stop|restart|status|logs\n');
   process.stdout.write('  status [--api|--service|--json]\n');
   process.stdout.write('  operator [summary|status] [--json]\n');
@@ -363,6 +364,7 @@ const help = () => {
   process.stdout.write('  bundle [--output <path>]\n');
   process.stdout.write('  uninstall --force [--purge]\n\n');
   process.stdout.write('Examples:\n');
+  process.stdout.write('  talonbot install --doctor\n');
   process.stdout.write('  talonbot status --api\n');
   process.stdout.write('  talonbot operator --json\n');
   process.stdout.write('  talonbot deploy --source /path/to/talonbot\n');
@@ -370,6 +372,11 @@ const help = () => {
 
 const main = async () => {
   const { command, args } = parseArgs(process.argv);
+
+  if (command === 'install') {
+    runRepoScript('install.sh', args);
+    return;
+  }
 
   if (['start', 'stop', 'restart', 'logs'].includes(command)) {
     runSystemctl(command as 'start' | 'stop' | 'restart' | 'logs');

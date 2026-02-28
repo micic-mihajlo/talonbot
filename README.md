@@ -21,30 +21,28 @@
 - `src/transports/{slack,discord}` message ingress adapters
 - `src/runtime/{http,socket}.ts` control interfaces
 
-## Try it in 3 minutes (local, no API keys)
+## 3-command quickstart (local, no API keys)
 
-No Slack/Discord credentials required for this path. Use the built-in mock engine:
+No Slack/Discord credentials required. The bootstrap installs source into `~/.talonbot/src` and a `talonbot` wrapper into `~/.local/bin`.
 
 ```bash
-cd /path/to/talonbot
-cp .env.example .env
-./install.sh --doctor --start
+curl -fsSL https://raw.githubusercontent.com/micic-mihajlo/talonbot/main/bootstrap.sh | bash
+talonbot install
+npm run start
 ```
 
-This gives an immediate local control-plane at:
+`talonbot install` is idempotent: it reuses `.env`, generates `CONTROL_AUTH_TOKEN` when missing, installs dependencies, and rebuilds safely.
+
+Control plane defaults after startup:
 
 - Unix socket: `${CONTROL_SOCKET_PATH}` (default `~/.local/share/talonbot/control.sock`)
-- HTTP control plane: port `8080` (set in `.env`)
+- HTTP: `http://127.0.0.1:8080`
 
-If you want it as a long-running VPS service:
+For an always-on Linux host with systemd:
 
 ```bash
-cd /path/to/talonbot
-cp .env.example .env
-./install.sh --daemon --doctor
+talonbot install --daemon --doctor
 ```
-
-This generates a dedicated `talonbot.service`, enables it, and starts it on boot.
 
 ## Discord-first quickstart
 
@@ -227,6 +225,7 @@ npm run cli -- uninstall --force
 Equivalent direct usage (after daemon install):
 
 ```bash
+talonbot install
 talonbot status
 talonbot operator
 talonbot tasks list
@@ -237,6 +236,9 @@ talonbot tasks list
 - `talonbot status` shows service errors:
   - Run `talonbot status --api` to bypass `systemctl` fallback and check API reachability directly.
   - Run `talonbot operator` for a combined health/release/sentry snapshot.
+- `talonbot: command not found` after bootstrap:
+  - Add `~/.local/bin` to your shell `PATH`.
+  - Re-run bootstrap: `curl -fsSL https://raw.githubusercontent.com/micic-mihajlo/talonbot/main/bootstrap.sh | bash`.
 - `talonbot doctor` reports startup errors:
   - Follow remediation text attached to each issue.
   - Re-run with runtime probe: `npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`.

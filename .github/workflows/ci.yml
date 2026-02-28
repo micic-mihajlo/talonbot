@@ -90,6 +90,8 @@ jobs:
         run: npm run build
       - name: Runtime smoke
         run: npm run test:smoke
+      - name: Bootstrap/install smoke
+        run: npm run test:smoke:bootstrap
 
   p0-gates:
     if: ${{ always() }}

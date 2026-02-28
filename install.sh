@@ -9,6 +9,12 @@ INSTALL_SERVICE=0
 OVERWRITE_ENV=0
 START_LOCAL=0
 RUN_DOCTOR=0
+NON_INTERACTIVE=0
+TOKEN_VALUE=""
+GENERATE_TOKEN_IF_MISSING=1
+FORCE_GENERATE_TOKEN=0
+SKIP_DEPS=0
+SKIP_BUILD=0
 
 log_info() {
   echo "[install] $*"
@@ -35,12 +41,19 @@ if ! [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] || [ "$NODE_MAJOR" -lt 20 ]; then
 fi
 
 usage() {
-  echo "Usage: ./install.sh [--daemon] [--force-env] [--start] [--doctor]"
+  echo "Usage: ./install.sh [--daemon] [--force-env] [--start] [--doctor] [--token <value>] [--generate-token] [--non-interactive|--yes] [--skip-deps] [--skip-build]"
   echo
   echo "  --daemon     Install + enable a systemd service for production use."
   echo "  --force-env  Regenerate .env even if it already exists."
   echo "  --start      Start in foreground after build (non-daemon mode)."
   echo "  --doctor     Run doctor checks after install/build (and runtime checks in daemon mode)."
+  echo "  --token      Set CONTROL_AUTH_TOKEN to an explicit value."
+  echo "  --generate-token  Force-generate and store a fresh CONTROL_AUTH_TOKEN."
+  echo "  --no-generate-token  Keep CONTROL_AUTH_TOKEN empty if missing."
+  echo "  --non-interactive   Explicitly disable prompts (default behavior)."
+  echo "  --yes        Alias for --non-interactive."
+  echo "  --skip-deps  Skip npm dependency installation."
+  echo "  --skip-build Skip npm build."
   echo
   echo "Environment defaults can be customized before running this script:"
   echo "  ENGINE_MODE=mock|process, ENGINE_COMMAND, CONTROL_HTTP_PORT, SLACK_ENABLED, DISCORD_ENABLED, etc."
@@ -62,6 +75,40 @@ while [[ $# -gt 0 ]]; do
       ;;
     --doctor)
       RUN_DOCTOR=1
+      shift
+      ;;
+    --token)
+      if [ $# -lt 2 ]; then
+        log_error "--token requires a value"
+        exit 1
+      fi
+      TOKEN_VALUE="$2"
+      shift 2
+      ;;
+    --token=*)
+      TOKEN_VALUE="${1#*=}"
+      shift
+      ;;
+    --generate-token)
+      FORCE_GENERATE_TOKEN=1
+      GENERATE_TOKEN_IF_MISSING=1
+      shift
+      ;;
+    --no-generate-token)
+      GENERATE_TOKEN_IF_MISSING=0
+      FORCE_GENERATE_TOKEN=0
+      shift
+      ;;
+    --non-interactive|--yes)
+      NON_INTERACTIVE=1
+      shift
+      ;;
+    --skip-deps)
+      SKIP_DEPS=1
+      shift
+      ;;
+    --skip-build)
+      SKIP_BUILD=1
       shift
       ;;
     -h|--help)
@@ -168,6 +215,77 @@ read_env_value() {
   printf '%s' "$value"
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v k="$key" -v v="$value" '
+    BEGIN { updated=0 }
+    $0 ~ "^[[:space:]]*" k "=" {
+      print k "=" v
+      updated=1
+      next
+    }
+    { print }
+    END {
+      if (!updated) {
+        print k "=" v
+      }
+    }
+  ' "$ENV_FILE" > "$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+generate_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 24
+    return
+  fi
+
+  if [ -n "$NODE_BIN" ]; then
+    "$NODE_BIN" -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))"
+    return
+  fi
+
+  date +%s | sha256sum | awk '{print substr($1,1,48)}'
+}
+
+ensure_control_auth_token() {
+  local current
+  local generated
+
+  current="$(read_env_value CONTROL_AUTH_TOKEN)"
+
+  if [ -n "$TOKEN_VALUE" ]; then
+    set_env_value CONTROL_AUTH_TOKEN "$TOKEN_VALUE"
+    log_info "Set CONTROL_AUTH_TOKEN from --token."
+    return
+  fi
+
+  if [ "$FORCE_GENERATE_TOKEN" -eq 1 ]; then
+    generated="$(generate_token)"
+    set_env_value CONTROL_AUTH_TOKEN "$generated"
+    log_info "Generated a fresh CONTROL_AUTH_TOKEN."
+    return
+  fi
+
+  if [ -n "$current" ]; then
+    log_info "Using existing CONTROL_AUTH_TOKEN from $ENV_FILE"
+    return
+  fi
+
+  if [ "$GENERATE_TOKEN_IF_MISSING" -eq 1 ]; then
+    generated="$(generate_token)"
+    set_env_value CONTROL_AUTH_TOKEN "$generated"
+    log_info "Generated CONTROL_AUTH_TOKEN in $ENV_FILE"
+    return
+  fi
+
+  log_warn "CONTROL_AUTH_TOKEN is empty in $ENV_FILE"
+  log_warn "Set one manually or rerun with --generate-token."
+}
+
 run_doctor_checks() {
   local mode="$1"
   local runtime_port
@@ -199,6 +317,7 @@ run_doctor_checks() {
 
 cd "$ROOT_DIR"
 write_env
+ensure_control_auth_token
 
 if [ "$INSTALL_SERVICE" -eq 1 ]; then
   if [ -z "$(read_env_value CONTROL_AUTH_TOKEN)" ]; then
@@ -207,11 +326,19 @@ if [ "$INSTALL_SERVICE" -eq 1 ]; then
   fi
 fi
 
-log_info "Installing node dependencies..."
-"$NPM_BIN" install
+if [ "$SKIP_DEPS" -eq 1 ]; then
+  log_info "Skipping dependency installation (--skip-deps)."
+else
+  log_info "Installing node dependencies..."
+  "$NPM_BIN" install
+fi
 
-log_info "Building runtime..."
-"$NPM_BIN" run build
+if [ "$SKIP_BUILD" -eq 1 ]; then
+  log_info "Skipping build (--skip-build)."
+else
+  log_info "Building runtime..."
+  "$NPM_BIN" run build
+fi
 
 if [ "$INSTALL_SERVICE" -eq 1 ]; then
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -316,10 +443,12 @@ fi
 
 echo
 echo "Setup complete."
-echo "Run:"
+echo "Quick start:"
 echo "  npm run start"
-echo "or"
-echo "  ./install.sh --start"
+echo "  talonbot status --api"
+echo
+echo "Service setup (recommended for always-on hosts):"
+echo "  talonbot install --daemon --doctor"
 echo "Optional checks:"
 echo "  npm run doctor"
 echo "  npm run cli -- operator"
