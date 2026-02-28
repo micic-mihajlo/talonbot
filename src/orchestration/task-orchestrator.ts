@@ -1129,7 +1129,15 @@ export class TaskOrchestrator {
 
       const activeWorktreePaths = new Set(
         Array.from(this.tasks.values())
-          .filter((task) => task.status === 'queued' || task.status === 'running')
+          .filter((task) => {
+            if (task.status === 'queued' || task.status === 'running') return true;
+            if ((task.status === 'failed' || task.status === 'blocked') && task.worktreePath) {
+              if (!task.finishedAt) return true;
+              const ageMs = nowMs - Date.parse(task.finishedAt);
+              return ageMs < failedRetentionMs;
+            }
+            return false;
+          })
           .map((task) => task.worktreePath)
           .filter((value): value is string => Boolean(value)),
       );
