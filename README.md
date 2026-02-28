@@ -86,6 +86,22 @@ npm run doctor
 npm run cli -- operator
 ```
 
+## P0 CI gates
+
+Pull requests and `main` pushes are gated on these required checks:
+
+1. `build` (`npm run build`)
+2. `lint` (`npm run lint`)
+3. `typecheck` (`npm run typecheck`)
+4. `tests` (`npm test`)
+5. `smoke` (`npm run test:smoke`)
+
+Run the same gate sequence locally with:
+
+```bash
+npm run ci:p0
+```
+
 Enable one transport when you’re ready to connect real chat:
 
 - `SLACK_ENABLED=true` plus Slack tokens

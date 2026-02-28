@@ -19,6 +19,19 @@ Parent task closes after all children complete.
 - then task state moves to `failed`
 - `escalationRequired=true` signals operator handoff
 
+## P0 CI gate workflow
+
+Every pull request and `main` push must pass:
+
+1. `build`
+2. `lint`
+3. `typecheck`
+4. `tests`
+5. `smoke`
+
+`p0-gates` is the aggregate required check in GitHub Actions and fails if any gate above is not successful.
+For local parity, run `npm run ci:p0`.
+
 ## Deploy and rollback workflow
 
 1. run `npm run doctor -- --strict`
