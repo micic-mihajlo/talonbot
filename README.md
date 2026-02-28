@@ -214,6 +214,26 @@ Session data lives under:
 
 Use `INSTALL.md` for a basic `systemd` bootstrap.
 
+### Linux VPS (process engine) checklist
+
+```bash
+talonbot install --daemon --doctor
+npm install -g @mariozechner/pi-coding-agent
+talonbot env set ENGINE_MODE process
+talonbot env set ENGINE_COMMAND "$(command -v pi)"
+talonbot env set ENGINE_ARGS "-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools"
+talonbot env set PI_SKIP_VERSION_CHECK 1
+sudo systemctl restart talonbot.service
+talonbot operator
+```
+
+Then verify health and worker/runtime status with authenticated API calls:
+
+```bash
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/health | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/workers | jq
+```
+
 ## Operator CLI
 
 Daemon installs place a global `talonbot` command in `/usr/local/bin/talonbot`.
