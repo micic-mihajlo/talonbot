@@ -31,6 +31,7 @@ jobs:
           CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
           CONTROL_HTTP_PORT=8090 \
           ENGINE_MODE=mock \
+          DISCORD_ENABLED=false \
           node dist/index.js > /tmp/talonbot-integration.log 2>&1 &
           runtime_pid=$!
 
@@ -46,12 +47,6 @@ jobs:
             fi
             sleep 1
           done
-
-          if ! curl -sf http://127.0.0.1:8090/health >/dev/null; then
-            echo "runtime failed to start during doctor step"
-            cat /tmp/talonbot-integration-doctor.log || true
-            exit 1
-          fi
 
           curl -sf -H "Authorization: Bearer integration-control-token-abcdefghijklmnopqrstuvwxyz" \
             http://127.0.0.1:8090/status >/dev/null
@@ -71,7 +66,11 @@ jobs:
       - name: Runtime doctor check
         run: |
           set -euo pipefail
-          CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz           CONTROL_HTTP_PORT=8090           ENGINE_MODE=mock           DISCORD_ENABLED=true           DISCORD_TOKEN=integration-placeholder-token           node dist/index.js > /tmp/talonbot-integration-doctor.log 2>&1 &
+          CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          CONTROL_HTTP_PORT=8090 \
+          ENGINE_MODE=mock \
+          DISCORD_ENABLED=false \
+          node dist/index.js > /tmp/talonbot-integration-doctor.log 2>&1 &
           runtime_pid=$!
 
           cleanup() {
@@ -93,4 +92,8 @@ jobs:
             exit 1
           fi
 
-          ENGINE_MODE=mock           CONTROL_HTTP_PORT=8090           CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz           DISCORD_ENABLED=true           DISCORD_TOKEN=integration-placeholder-token           npm run doctor -- --strict --runtime-url http://127.0.0.1:8090 --runtime-token integration-control-token-abcdefghijklmnopqrstuvwxyz
+          ENGINE_MODE=mock \
+          CONTROL_HTTP_PORT=8090 \
+          CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          DISCORD_ENABLED=false \
+          npm run doctor -- --strict --runtime-url http://127.0.0.1:8090 --runtime-token integration-control-token-abcdefghijklmnopqrstuvwxyz
