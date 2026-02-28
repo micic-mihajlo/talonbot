@@ -237,7 +237,7 @@ export class AgentSession {
     this.currentAbort = aborter;
     this.appendHistory('user', normalizedText, new Date(event.receivedAt).toISOString());
 
-    if (/don't message me back without the pr url|ping me when you're done|work, don't message/i.test(normalizedText)) {
+    if (/don't message me back without the pr url|ping me when you're done|work, don't message|no replies? until pr url|no reply until pr url/i.test(normalizedText)) {
       this.requireVerifiedPrForReplies = true;
     }
 
