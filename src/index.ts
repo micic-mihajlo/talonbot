@@ -6,7 +6,12 @@ import { createHttpServer } from './runtime/http.js';
 import { SlackTransport } from './transports/slack/index.js';
 import { DiscordTransport } from './transports/discord/index.js';
 import { createSocketServer } from './runtime/socket.js';
-import { formatStartupIssue, validateStartupConfig } from './utils/startup.js';
+import {
+  formatStartupIssue,
+  StartupValidationError,
+  type StartupIssue,
+  validateStartupConfigOrThrow,
+} from './utils/startup.js';
 import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
 import { BridgeSupervisor } from './bridge/supervisor.js';
 import { ReleaseManager } from './ops/release-manager.js';
@@ -27,7 +32,16 @@ const envelopeToTaskText = (source: string, type: string, payload: unknown) => {
 };
 
 const run = async () => {
-  const startupIssues = validateStartupConfig(config);
+  let startupIssues: StartupIssue[];
+  try {
+    startupIssues = validateStartupConfigOrThrow(config);
+  } catch (error) {
+    if (error instanceof StartupValidationError) {
+      startupIssues = error.issues;
+    } else {
+      throw error;
+    }
+  }
   const hasStartupError = startupIssues.some((issue) => issue.severity === 'error');
 
   for (const issue of startupIssues) {
@@ -40,8 +54,7 @@ const run = async () => {
   }
 
   if (hasStartupError) {
-    logger.error('startup checks failed, aborting');
-    process.exit(1);
+    throw new StartupValidationError(startupIssues);
   }
 
   const control = new ControlPlane(config);
@@ -170,6 +183,11 @@ const run = async () => {
 };
 
 run().catch((err) => {
+  if (err instanceof StartupValidationError) {
+    logger.error(`startup checks failed, aborting (${err.errorCount} error(s))`);
+    process.exit(1);
+    return;
+  }
   logger.error('fatal', err as any);
   process.exit(1);
 });

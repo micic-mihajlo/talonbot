@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
-import { formatStartupIssue, validateStartupConfig } from '../src/utils/startup.js';
+import { StartupValidationError, formatStartupIssue, validateStartupConfig, validateStartupConfigOrThrow } from '../src/utils/startup.js';
 import { config as defaultConfig } from '../src/config.js';
 
 const tempPath = (suffix: string) => path.join('/tmp', `talonbot-check-${suffix}-${Math.random().toString(36).slice(2, 7)}`);
@@ -78,7 +78,6 @@ describe('startup validation', () => {
     expect(issue?.severity).toBe('error');
   });
 
-
   it('errors when CONTROL_SOCKET_PATH is longer than unix socket limits', () => {
     const issues = validateStartupConfig({
       ...defaultConfig,
@@ -92,5 +91,26 @@ describe('startup validation', () => {
         (issue) => issue.area === 'socket' && issue.severity === 'error' && issue.message.includes('too long'),
       ),
     ).toBe(true);
+  });
+
+  it('fails fast when startup validation includes errors', () => {
+    const input = {
+      ...defaultConfig,
+      ENGINE_MODE: 'process',
+      ENGINE_COMMAND: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+      ENGINE_CWD: tempPath('engine'),
+    };
+
+    let thrown: unknown;
+    try {
+      validateStartupConfigOrThrow(input);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(StartupValidationError);
+    expect((thrown as StartupValidationError).issues.some((issue) => issue.code === 'missing_engine_command')).toBe(true);
   });
 });

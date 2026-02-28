@@ -12,6 +12,19 @@ export interface StartupIssue {
   code?: string;
 }
 
+export class StartupValidationError extends Error {
+  readonly issues: StartupIssue[];
+  readonly errorCount: number;
+
+  constructor(issues: StartupIssue[]) {
+    const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+    super(`Startup validation failed with ${errorCount} error(s).`);
+    this.name = 'StartupValidationError';
+    this.issues = issues;
+    this.errorCount = errorCount;
+  }
+}
+
 const ensureDirWritable = (targetPath: string): string | null => {
   try {
     fs.mkdirSync(targetPath, { recursive: true });
@@ -255,5 +268,13 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     );
   }
 
+  return issues;
+};
+
+export const validateStartupConfigOrThrow = (config: AppConfig): StartupIssue[] => {
+  const issues = validateStartupConfig(config);
+  if (issues.some((issue) => issue.severity === 'error')) {
+    throw new StartupValidationError(issues);
+  }
   return issues;
 };

@@ -1,5 +1,18 @@
 # Configuration
 
+## P0 strict schema
+
+- Config is parsed from environment using a strict Zod schema at process boot.
+- `.env` defaults to `<repo>/.env`; override with `TALONBOT_ENV_FILE=/path/to/.env`.
+- Unknown keys in the loaded `.env` file fail startup (typos are treated as errors).
+- Boolean vars must be explicit: `true/false`, `1/0`, `yes/no`, or `on/off`.
+- Cross-field constraints fail fast:
+  - `ENGINE_MODE=process` requires non-empty `ENGINE_COMMAND`.
+  - `SLACK_ENABLED=true` requires all three Slack secrets.
+  - `DISCORD_ENABLED=true` requires `DISCORD_TOKEN`.
+  - `TASK_AUTO_PR=true` requires `TASK_AUTO_COMMIT=true`.
+- Startup exits before runtime initialization when startup validation contains any `error` severity issue.
+
 ## Core runtime
 
 - `DATA_DIR` default: `~/.local/share/talonbot`

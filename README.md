@@ -97,8 +97,13 @@ Enable one transport when you’re ready to connect real chat:
 
 ### Startup checks
 
-- `control-plane`: warns if `CONTROL_AUTH_TOKEN` is missing.
+- Strict config schema is validated before runtime init.
+- Unknown keys in `.env` fail fast (override env file path with `TALONBOT_ENV_FILE`).
 - `engine`: errors if `ENGINE_MODE=process` but `ENGINE_COMMAND` is empty.
+- `slack`: errors if `SLACK_ENABLED=true` without required Slack secrets.
+- `discord`: errors if `DISCORD_ENABLED=true` without `DISCORD_TOKEN`.
+- `orchestration`: errors if `TASK_AUTO_PR=true` and `TASK_AUTO_COMMIT=false`.
+- `control-plane`: warns if `CONTROL_AUTH_TOKEN` is missing.
 - `storage` / `socket`: validates writable runtime directories.
 - `runtime`: warns if running as root.
 
