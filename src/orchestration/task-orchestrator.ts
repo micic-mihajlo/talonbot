@@ -64,6 +64,13 @@ const toEventDetails = (details?: Record<string, unknown>) => {
 };
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+const splitShellArgs = (args: string) =>
+  args && args.trim().length > 0
+    ? args
+        .trim()
+        .match(/(?:"[^"]*"|[^\s"]+)/g)
+        ?.map((value) => value.replace(/^"(.*)"$/, '$1')) ?? []
+    : [];
 
 interface ParsedEngineOutput {
   summary: string;
@@ -889,6 +896,8 @@ export class TaskOrchestrator {
     await fs.rm(stderrPath, { force: true }).catch(() => undefined);
     await fs.rm(exitPath, { force: true }).catch(() => undefined);
 
+    const cmdTokens = [this.config.ENGINE_COMMAND, ...splitShellArgs(this.config.ENGINE_ARGS)];
+    const quotedCmdTokens = cmdTokens.map((token) => shellQuote(token)).join(' ');
     const script = [
       '#!/usr/bin/env bash',
       'set -uo pipefail',
@@ -896,12 +905,9 @@ export class TaskOrchestrator {
       `OUT=${shellQuote(stdoutPath)}`,
       `ERR=${shellQuote(stderrPath)}`,
       `EXIT=${shellQuote(exitPath)}`,
+      `CMD=(${quotedCmdTokens})`,
       'set +e',
-      `if [ -n ${shellQuote(this.config.ENGINE_ARGS)} ]; then`,
-      `  eval ${shellQuote(`"${this.config.ENGINE_COMMAND}" ${this.config.ENGINE_ARGS} "$PAYLOAD"`)} >"$OUT" 2>"$ERR"`,
-      'else',
-      `  ${shellQuote(this.config.ENGINE_COMMAND)} "$PAYLOAD" >"$OUT" 2>"$ERR"`,
-      'fi',
+      '"${CMD[@]}" "$PAYLOAD" >"$OUT" 2>"$ERR"',
       'STATUS=$?',
       'set -e',
       'echo "$STATUS" > "$EXIT"',
