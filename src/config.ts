@@ -154,6 +154,25 @@ const ALLOWED_FOREIGN_ENV_KEYS = new Set<string>([
   'CEREBRAS_API_KEY',
 ]);
 
+const ALLOWED_FOREIGN_ENV_PREFIXES = [
+  'PI_',
+  'OPENAI_',
+  'ANTHROPIC_',
+  'AZURE_OPENAI_',
+  'GEMINI_',
+  'GROQ_',
+  'CEREBRAS_',
+  'XAI_',
+  'OPENROUTER_',
+  'AI_GATEWAY_',
+  'ZAI_',
+  'MISTRAL_',
+  'MINIMAX_',
+  'KIMI_',
+  'AWS_',
+  'CODEX_',
+] as const;
+
 const formatIssue = (issue: ZodIssue) => {
   const key = issue.path.length > 0 ? issue.path.join('.') : '(root)';
   return `${key}: ${issue.message}`;
@@ -164,8 +183,10 @@ export const formatConfigSchemaIssues = (issues: ZodIssue[]): string =>
 
 const unknownDotenvKeys = (input: DotenvParseOutput | undefined): string[] => {
   if (!input) return [];
+  const isAllowedForeignKey = (key: string) =>
+    ALLOWED_FOREIGN_ENV_KEYS.has(key) || ALLOWED_FOREIGN_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
   return Object.keys(input)
-    .filter((key) => !KNOWN_CONFIG_KEYS.has(key) && !ALLOWED_FOREIGN_ENV_KEYS.has(key))
+    .filter((key) => !KNOWN_CONFIG_KEYS.has(key) && !isAllowedForeignKey(key))
     .sort();
 };
 

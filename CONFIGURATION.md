@@ -4,7 +4,7 @@
 
 - Config is parsed from environment using a strict Zod schema at process boot.
 - `.env` defaults to `<repo>/.env`; override with `TALONBOT_ENV_FILE=/path/to/.env`.
-- Unknown keys in the loaded `.env` file fail startup (typos are treated as errors).
+- Unknown keys in the loaded `.env` file fail startup (typos are treated as errors), except vetted external prefixes used by engines/providers (`PI_`, `OPENAI_`, `ANTHROPIC_`, `AZURE_OPENAI_`, `GEMINI_`, `GROQ_`, `CEREBRAS_`, `XAI_`, `OPENROUTER_`, `AI_GATEWAY_`, `ZAI_`, `MISTRAL_`, `MINIMAX_`, `KIMI_`, `AWS_`, `CODEX_`).
 - Boolean vars must be explicit: `true/false`, `1/0`, `yes/no`, or `on/off`.
 - Cross-field constraints fail fast:
   - `ENGINE_MODE=process` requires non-empty `ENGINE_COMMAND`.
@@ -21,6 +21,7 @@
 - `CONTROL_AUTH_TOKEN` required for secured control-plane access
 - `CONTROL_SOCKET_PATH` default: `~/.local/share/talonbot/control.sock`
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
+- `PI_SKIP_VERSION_CHECK=1` is recommended for process-mode `pi` engine runs to avoid version-check stalls.
 - `ENGINE_PROVIDER` optional explicit provider override passed to engine process (appended as `--provider`).
 - `ENGINE_MODEL` optional explicit model override passed to engine process (appended as `--model`).
 - `WORKER_RUNTIME` values: `inline`, `tmux` (default `inline`)
