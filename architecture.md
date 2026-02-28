@@ -20,9 +20,10 @@
 
 1. request enters via transport/API/webhook
 2. orchestrator queues task (`queued`)
-3. worker starts (`running`) in git worktree
-4. worker finishes (`done`) or escalates (`blocked`/`failed`)
-5. artifacts persist (summary, optional commit/PR/checks)
+3. deterministic launcher creates task-scoped branch/worktree + assigned worker session (`running`)
+4. explicit status transitions are audited (`queued -> running -> done|failed`, plus `blocked/cancelled`)
+5. artifact-backed reports persist (launcher metadata, summary, changed files, optional commit/PR/checks/test output)
+6. non-LLM health monitor reports orphaned workers, stuck tasks, and stale worktrees via `/status`
 
 ## Release flow
 
