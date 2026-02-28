@@ -20,6 +20,8 @@
 - `CONTROL_AUTH_TOKEN` required for secured control-plane access
 - `CONTROL_SOCKET_PATH` default: `~/.local/share/talonbot/control.sock`
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
+- `ENGINE_PROVIDER` optional explicit provider override passed to engine process (appended as `--provider`).
+- `ENGINE_MODEL` optional explicit model override passed to engine process (appended as `--model`).
 
 ## Orchestration
 

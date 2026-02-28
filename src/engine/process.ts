@@ -73,6 +73,45 @@ const splitCommand = (command: string, args: string) => {
   return [command, ...parsed];
 };
 
+
+const stripFlagAndValue = (args: string[], ...flags: string[]) => {
+  const out: string[] = [];
+  const known = new Set(flags);
+
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? '';
+    const eqIndex = token.indexOf('=');
+    const tokenFlag = eqIndex > 0 ? token.slice(0, eqIndex) : token;
+
+    if (known.has(tokenFlag)) {
+      if (eqIndex === -1) {
+        i += 1;
+      }
+      continue;
+    }
+
+    out.push(token);
+  }
+
+  return out;
+};
+
+const composeEngineArgs = (baseArgs: string[], model?: string, provider?: string) => {
+  let args = stripFlagAndValue(baseArgs, '--model', '--provider');
+
+  const normalizedProvider = (provider || '').trim();
+  const normalizedModel = (model || '').trim();
+
+  if (normalizedProvider) {
+    args = [...args, '--provider', normalizedProvider];
+  }
+
+  if (normalizedModel) {
+    args = [...args, '--model', normalizedModel];
+  }
+
+  return args;
+};
 interface ExecFailureDetails {
   message: string;
   code?: number | string;
@@ -167,6 +206,8 @@ export class ProcessEngine implements AgentEngine {
     private readonly args = '',
     private readonly timeoutMs = 120000,
     cwd = '',
+    private readonly model = '',
+    private readonly provider = '',
   ) {
     this.cwd = expandPath(cwd || process.cwd());
   }
@@ -183,7 +224,8 @@ export class ProcessEngine implements AgentEngine {
       attachments: input.recentAttachments,
     });
 
-    const [cmd, ...cmdArgs] = splitCommand(this.command, this.args);
+    const [cmd, ...rawArgs] = splitCommand(this.command, this.args);
+    const cmdArgs = composeEngineArgs(rawArgs, this.model, this.provider);
     await fs.mkdir(this.cwd, { recursive: true });
 
     let stdout = '';

@@ -16,8 +16,8 @@ export const buildEngine = (config: AppConfig, target: EngineBuildTarget = 'disp
       return new SessionEngine(config.CONTROL_SOCKET_PATH, config.ENGINE_TIMEOUT_MS);
     }
 
-    return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS, config.ENGINE_CWD);
+    return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS, config.ENGINE_CWD, config.ENGINE_MODEL, config.ENGINE_PROVIDER);
   }
 
-  return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS, config.ENGINE_CWD);
+  return new ProcessEngine(config.ENGINE_COMMAND, config.ENGINE_ARGS, config.ENGINE_TIMEOUT_MS, config.ENGINE_CWD, config.ENGINE_MODEL, config.ENGINE_PROVIDER);
 };

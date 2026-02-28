@@ -43,6 +43,8 @@ const schemaBase = z.object({
   ENGINE_MODE: z.enum(['process', 'mock', 'session']).default('process'),
   ENGINE_COMMAND: z.string().default('pi'),
   ENGINE_ARGS: z.string().default(''),
+  ENGINE_MODEL: z.string().default(''),
+  ENGINE_PROVIDER: z.string().default(''),
   ENGINE_CWD: z.string().default('~/.local/share/talonbot/engine'),
   ENGINE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120000),
 
