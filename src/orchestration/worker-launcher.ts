@@ -13,15 +13,27 @@ export interface WorkerCleanupDecision {
 export class WorkerLauncher {
   constructor(private readonly worktree: WorktreeManager) {}
 
-  assignedSession(taskId: string) {
-    return `task-worker:${taskId}`;
+  private slug(input: string, fallback: string, maxLen: number) {
+    const normalized = input
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, maxLen);
+    return normalized || fallback;
   }
 
-  async launch(repo: RepoRegistration, taskId: string): Promise<WorkerLaunchResult> {
+  assignedSession(repoId: string, taskId: string, taskText = '') {
+    const repo = this.slug(repoId, 'repo', 24);
+    const todo = this.slug(taskText, this.slug(taskId, 'task', 16), 24);
+    const idShort = this.slug(taskId, 'task', 12).slice(-8);
+    return `dev-agent-${repo}-${todo}-${idShort}`;
+  }
+
+  async launch(repo: RepoRegistration, taskId: string, taskText = ''): Promise<WorkerLaunchResult> {
     const worktree = await this.worktree.createWorktree(repo, taskId);
     return {
       ...worktree,
-      assignedSession: this.assignedSession(taskId),
+      assignedSession: this.assignedSession(repo.id, taskId, taskText),
     };
   }
 

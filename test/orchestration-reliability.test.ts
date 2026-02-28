@@ -96,7 +96,7 @@ describe('task orchestration reliability upgrades', () => {
     const done = orchestrator.getTask(task.id);
     expect(done?.status).toBe('done');
     expect(done?.state).toBe('done');
-    expect(done?.assignedSession).toBe(`task-worker:${task.id}`);
+    expect(done?.assignedSession).toContain('dev-agent-repo-');
     expect(done?.branch).toBe(`talon/${task.id}`);
     expect(done?.worktreePath).toContain(path.join(sandbox, 'worktrees'));
     expect(done?.artifacts.some((artifact) => artifact.kind === 'launcher')).toBe(true);
@@ -177,7 +177,9 @@ describe('worker launcher + health monitor', () => {
     try {
       const manager = new WorktreeManager(path.join(sandbox, 'worktrees'));
       const launcher = new WorkerLauncher(manager);
-      expect(launcher.assignedSession('task-123')).toBe('task-worker:task-123');
+      expect(launcher.assignedSession('repo', 'task-123', 'Implement endpoint hardening')).toBe(
+        'dev-agent-repo-implement-endpoint-harde-task-123',
+      );
       expect(launcher.shouldCleanup('done', { autoCleanup: true, failedRetentionHours: 24 }).cleanup).toBe(true);
       expect(launcher.shouldCleanup('failed', { autoCleanup: true, failedRetentionHours: 24 }).cleanup).toBe(false);
       expect(launcher.shouldCleanup('failed', { autoCleanup: true, failedRetentionHours: 0 }).cleanup).toBe(true);
@@ -196,8 +198,8 @@ describe('worker launcher + health monitor', () => {
       repoId: 'repo',
       status: 'running',
       state: 'running',
-      assignedSession: 'task-worker:task-running',
-      workerSessionKey: 'task-worker:task-running',
+      assignedSession: 'dev-agent-repo-running-task-running',
+      workerSessionKey: 'dev-agent-repo-running-task-running',
       retryCount: 0,
       maxRetries: 1,
       escalationRequired: false,
@@ -213,8 +215,8 @@ describe('worker launcher + health monitor', () => {
       id: 'task-queued',
       status: 'queued',
       state: 'queued',
-      assignedSession: 'task-worker:task-queued',
-      workerSessionKey: 'task-worker:task-queued',
+      assignedSession: 'dev-agent-repo-queued-task-queued',
+      workerSessionKey: 'dev-agent-repo-queued-task-queued',
       updatedAt: new Date(now - 12 * 60_000).toISOString(),
     };
 

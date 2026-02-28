@@ -296,7 +296,7 @@ export class TaskOrchestrator {
     const now = new Date().toISOString();
     const id = randomId('task');
     const status = input.status || 'queued';
-    const assignedSession = this.launcher.assignedSession(id);
+    const assignedSession = this.launcher.assignedSession(input.repoId, id, input.text);
 
     return {
       id,
@@ -377,7 +377,7 @@ export class TaskOrchestrator {
       await this.persist();
 
       repo = this.resolveRepo(task.repoId);
-      const launched = await this.launcher.launch(repo, task.id);
+      const launched = await this.launcher.launch(repo, task.id, task.text);
       launchedPath = launched.path;
       launchedBranch = launched.branch;
       task.assignedSession = launched.assignedSession;
@@ -896,7 +896,7 @@ export class TaskOrchestrator {
         ? raw.assignedSession
         : typeof raw.workerSessionKey === 'string' && raw.workerSessionKey.trim()
           ? raw.workerSessionKey
-          : this.launcher.assignedSession(raw.id);
+          : this.launcher.assignedSession(typeof raw.repoId === 'string' ? raw.repoId : 'repo', raw.id, typeof raw.text === 'string' ? raw.text : '');
 
     const normalizedArtifacts = Array.isArray(raw.artifacts)
       ? raw.artifacts
