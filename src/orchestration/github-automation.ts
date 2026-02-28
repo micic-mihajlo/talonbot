@@ -27,8 +27,7 @@ export class GitHubAutomation {
     const status = await this.git(worktreePath, ['status', '--porcelain']);
     return status.stdout
       .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
+      .filter((line) => line.length > 3)
       .map((line) => line.slice(3).trim())
       .filter(Boolean);
   }
