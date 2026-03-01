@@ -38,7 +38,7 @@ jobs:
           CONTROL_HTTP_PORT=8092 \
           ENGINE_MODE=process \
           ENGINE_COMMAND=node \
-          ENGINE_ARGS="scripts/ci/mock-process-engine.mjs" \
+          ENGINE_ARGS="$PWD/scripts/ci/mock-process-engine.mjs" \
           ENGINE_CWD=/tmp/talonbot-e2e-engine \
           ENGINE_TIMEOUT_MS=120000 \
           CHAT_DISPATCH_MODE=task \
