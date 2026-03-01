@@ -26,6 +26,17 @@ describe('config schema', () => {
     ).toThrow(/CONTROL_HTTP_PRT/);
   });
 
+  it('allows vetted foreign engine/provider prefixes in .env', () => {
+    const parsed = parseAppConfig({ CONTROL_HTTP_PORT: '8080' } as NodeJS.ProcessEnv, {
+      CONTROL_HTTP_PORT: '8080',
+      PI_SKIP_VERSION_CHECK: '1',
+      OPENAI_BASE_URL: 'https://example.invalid',
+      CODEX_OAUTH_TOKEN: 'token',
+    });
+
+    expect(parsed.CONTROL_HTTP_PORT).toBe(8080);
+  });
+
   it('fails when a boolean env uses an invalid value', () => {
     expect(() => parseAppConfig({ SLACK_ENABLED: 'maybe' } as NodeJS.ProcessEnv, {})).toThrow(/SLACK_ENABLED/);
   });

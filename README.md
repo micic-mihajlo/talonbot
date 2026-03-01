@@ -123,7 +123,7 @@ Enable one transport when you’re ready to connect real chat:
 ### Startup checks
 
 - Strict config schema is validated before runtime init.
-- Unknown keys in `.env` fail fast (override env file path with `TALONBOT_ENV_FILE`).
+- Unknown keys in `.env` fail fast (override env file path with `TALONBOT_ENV_FILE`), except vetted external engine/provider prefixes (for example `PI_*`, `OPENAI_*`, `CODEX_*`).
 - `engine`: errors if `ENGINE_MODE=process` but `ENGINE_COMMAND` is empty.
 - `slack`: errors if `SLACK_ENABLED=true` without required Slack secrets.
 - `discord`: errors if `DISCORD_ENABLED=true` without `DISCORD_TOKEN`.
@@ -156,6 +156,7 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 - `POST /stop`
 - `POST /alias` with action `set|unset|resolve|list`
 - `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `GET /tasks/:id/report`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
+- `GET /workers`, `POST /workers/cleanup`, `POST /workers/:session/stop`
 - `GET /repos`, `POST /repos/register`, `POST /repos/remove`
 - `POST /bridge/envelope`, `POST /webhook/github`
 - `GET /bridge/status`
@@ -213,6 +214,26 @@ Session data lives under:
 
 Use `INSTALL.md` for a basic `systemd` bootstrap.
 
+### Linux VPS (process engine) checklist
+
+```bash
+talonbot install --daemon --doctor
+npm install -g @mariozechner/pi-coding-agent
+talonbot env set ENGINE_MODE process
+talonbot env set ENGINE_COMMAND "$(command -v pi)"
+talonbot env set ENGINE_ARGS "-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools"
+talonbot env set PI_SKIP_VERSION_CHECK 1
+sudo systemctl restart talonbot.service
+talonbot operator
+```
+
+Then verify health and worker/runtime status with authenticated API calls:
+
+```bash
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/health | jq
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/workers | jq
+```
+
 ## Operator CLI
 
 Daemon installs place a global `talonbot` command in `/usr/local/bin/talonbot`.
@@ -228,6 +249,7 @@ npm run cli -- env get CONTROL_AUTH_TOKEN
 npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default true
 npm run cli -- tasks create --repo my-repo --text "Implement endpoint hardening"
 npm run cli -- tasks list
+npm run cli -- workers list
 npm run cli -- attach --session discord:12345:main
 npm run cli -- deploy --source /path/to/talonbot
 npm run cli -- rollback previous
@@ -235,6 +257,8 @@ npm run cli -- audit
 npm run cli -- bundle --output /tmp
 npm run cli -- uninstall --force
 ```
+
+Diagnostics bundles now include worker-plane/runtime artifacts (`workers.json`, `orchestration-health.json`) alongside sessions/tasks/release/audit data.
 
 Equivalent direct usage (after daemon install):
 

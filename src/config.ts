@@ -47,6 +47,10 @@ const schemaBase = z.object({
   ENGINE_PROVIDER: z.string().default(''),
   ENGINE_CWD: z.string().default('~/.local/share/talonbot/engine'),
   ENGINE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120000),
+  WORKER_RUNTIME: z.enum(['inline', 'tmux']).default('inline'),
+  WORKER_SESSION_PREFIX: z.string().default('dev-agent'),
+  TMUX_BINARY: z.string().default('tmux'),
+  WORKER_TMUX_POLL_MS: z.coerce.number().int().min(100).max(60000).default(500),
 
   REPO_ROOT_DIR: z.string().default('~/workspace'),
   WORKTREE_ROOT_DIR: z.string().default('~/workspace/worktrees'),
@@ -112,6 +116,14 @@ export const appConfigSchema = schemaBase.superRefine((input, ctx) => {
     });
   }
 
+  if (input.WORKER_RUNTIME === 'tmux' && input.ENGINE_MODE !== 'process') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['WORKER_RUNTIME'],
+      message: 'WORKER_RUNTIME=tmux requires ENGINE_MODE=process.',
+    });
+  }
+
   if (input.SLACK_ENABLED && (!input.SLACK_BOT_TOKEN || !input.SLACK_APP_TOKEN || !input.SLACK_SIGNING_SECRET)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -142,6 +154,25 @@ const ALLOWED_FOREIGN_ENV_KEYS = new Set<string>([
   'CEREBRAS_API_KEY',
 ]);
 
+const ALLOWED_FOREIGN_ENV_PREFIXES = [
+  'PI_',
+  'OPENAI_',
+  'ANTHROPIC_',
+  'AZURE_OPENAI_',
+  'GEMINI_',
+  'GROQ_',
+  'CEREBRAS_',
+  'XAI_',
+  'OPENROUTER_',
+  'AI_GATEWAY_',
+  'ZAI_',
+  'MISTRAL_',
+  'MINIMAX_',
+  'KIMI_',
+  'AWS_',
+  'CODEX_',
+] as const;
+
 const formatIssue = (issue: ZodIssue) => {
   const key = issue.path.length > 0 ? issue.path.join('.') : '(root)';
   return `${key}: ${issue.message}`;
@@ -152,8 +183,10 @@ export const formatConfigSchemaIssues = (issues: ZodIssue[]): string =>
 
 const unknownDotenvKeys = (input: DotenvParseOutput | undefined): string[] => {
   if (!input) return [];
+  const isAllowedForeignKey = (key: string) =>
+    ALLOWED_FOREIGN_ENV_KEYS.has(key) || ALLOWED_FOREIGN_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
   return Object.keys(input)
-    .filter((key) => !KNOWN_CONFIG_KEYS.has(key) && !ALLOWED_FOREIGN_ENV_KEYS.has(key))
+    .filter((key) => !KNOWN_CONFIG_KEYS.has(key) && !isAllowedForeignKey(key))
     .sort();
 };
 

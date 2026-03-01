@@ -10,6 +10,7 @@ const ENGINE_ENV_ALLOWLIST = [
   'USER',
   'LOGNAME',
   'SHELL',
+  'CI',
   'LANG',
   'LC_ALL',
   'TZ',
@@ -46,6 +47,25 @@ const ENGINE_ENV_ALLOWLIST = [
   'PI_AI_ANTIGRAVITY_VERSION',
 ] as const;
 
+const ENGINE_ENV_PREFIX_ALLOWLIST = [
+  'PI_',
+  'OPENAI_',
+  'ANTHROPIC_',
+  'AZURE_OPENAI_',
+  'GEMINI_',
+  'GROQ_',
+  'CEREBRAS_',
+  'XAI_',
+  'OPENROUTER_',
+  'AI_GATEWAY_',
+  'ZAI_',
+  'MISTRAL_',
+  'MINIMAX_',
+  'KIMI_',
+  'AWS_',
+  'CODEX_',
+] as const;
+
 const buildEngineEnv = (input: EngineInput, cwd: string): NodeJS.ProcessEnv => {
   const base: NodeJS.ProcessEnv = {
     TALONBOT_SESSION: input.sessionKey,
@@ -55,6 +75,13 @@ const buildEngineEnv = (input: EngineInput, cwd: string): NodeJS.ProcessEnv => {
 
   for (const key of ENGINE_ENV_ALLOWLIST) {
     const value = process.env[key];
+    if (typeof value === 'string' && value.length > 0) {
+      base[key] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!ENGINE_ENV_PREFIX_ALLOWLIST.some((prefix) => key.startsWith(prefix))) continue;
     if (typeof value === 'string' && value.length > 0) {
       base[key] = value;
     }

@@ -63,6 +63,15 @@ const toEventDetails = (details?: Record<string, unknown>) => {
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
+const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+const splitShellArgs = (args: string) =>
+  args && args.trim().length > 0
+    ? args
+        .trim()
+        .match(/(?:"[^"]*"|[^\s"]+)/g)
+        ?.map((value) => value.replace(/^"(.*)"$/, '$1')) ?? []
+    : [];
+
 interface ParsedEngineOutput {
   summary: string;
   state?: 'done' | 'blocked';
@@ -77,6 +86,40 @@ interface TransitionInput {
   kind: string;
   message: string;
   details?: Record<string, unknown>;
+}
+
+export interface WorkerRuntimeTaskStatus {
+  taskId: string;
+  repoId: string;
+  status: TaskStatus;
+  session: string;
+  worktreePath?: string;
+  branch?: string;
+  startedAt?: string;
+}
+
+export interface WorkerRuntimeSnapshot {
+  runtime: 'inline' | 'tmux';
+  sessionPrefix: string;
+  activeTasks: WorkerRuntimeTaskStatus[];
+  activeSessions: string[];
+  tmuxSessions: string[];
+  orphanedSessions: string[];
+}
+
+export interface WorkerCleanupReport {
+  runtime: 'inline' | 'tmux';
+  scanned: number;
+  killed: string[];
+  kept: string[];
+  reason?: string;
+}
+
+export interface WorkerStopReport {
+  session: string;
+  taskId?: string;
+  cancelRequested: boolean;
+  tmuxStopped: boolean;
 }
 
 export class TaskOrchestrator {
@@ -101,7 +144,10 @@ export class TaskOrchestrator {
     this.taskFile = path.join(dataDir, 'tasks', 'state.json');
     this.repoRegistry = new RepoRegistry(path.join(dataDir, 'repos', 'registry.json'));
     this.worktree = new WorktreeManager(config.WORKTREE_ROOT_DIR);
-    this.launcher = new WorkerLauncher(this.worktree);
+    this.launcher = new WorkerLauncher(this.worktree, {
+      sessionPrefix: config.WORKER_SESSION_PREFIX,
+      tmuxBinary: config.TMUX_BINARY,
+    });
     this.memory = new TeamMemory(path.join(dataDir, 'memory'));
     this.engine = buildEngine(config, 'orchestrator');
   }
@@ -159,6 +205,119 @@ export class TaskOrchestrator {
     };
 
     return snapshot;
+  }
+
+  async getWorkerRuntimeSnapshot(): Promise<WorkerRuntimeSnapshot> {
+    const activeTasks = Array.from(this.tasks.values())
+      .filter((task) => task.status === 'running' && task.assignedSession)
+      .map((task) => ({
+        taskId: task.id,
+        repoId: task.repoId,
+        status: task.status,
+        session: task.assignedSession,
+        worktreePath: task.worktreePath,
+        branch: task.branch,
+        startedAt: task.startedAt,
+      }));
+    const activeSessions = Array.from(new Set(activeTasks.map((task) => task.session)));
+
+    if (this.config.WORKER_RUNTIME !== 'tmux') {
+      return {
+        runtime: 'inline',
+        sessionPrefix: this.config.WORKER_SESSION_PREFIX,
+        activeTasks,
+        activeSessions,
+        tmuxSessions: [],
+        orphanedSessions: [],
+      };
+    }
+
+    const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+    const tmuxSessions = await this.launcher
+      .listTmuxSessions()
+      .then((sessions) => sessions.filter((session) => session.startsWith(sessionPrefix)));
+    const activeSessionSet = new Set(activeSessions);
+    const orphanedSessions = tmuxSessions.filter((session) => !activeSessionSet.has(session));
+
+    return {
+      runtime: 'tmux',
+      sessionPrefix: this.config.WORKER_SESSION_PREFIX,
+      activeTasks,
+      activeSessions,
+      tmuxSessions,
+      orphanedSessions,
+    };
+  }
+
+  async cleanupOrphanedWorkers(): Promise<WorkerCleanupReport> {
+    if (this.config.WORKER_RUNTIME !== 'tmux') {
+      return {
+        runtime: 'inline',
+        scanned: 0,
+        killed: [],
+        kept: [],
+        reason: 'WORKER_RUNTIME is inline',
+      };
+    }
+
+    const snapshot = await this.getWorkerRuntimeSnapshot();
+    const activeSet = new Set(snapshot.activeSessions);
+    const killed: string[] = [];
+    const kept: string[] = [];
+
+    for (const session of snapshot.tmuxSessions) {
+      if (activeSet.has(session)) {
+        kept.push(session);
+        continue;
+      }
+      await this.launcher.killTmuxSession(session).catch(() => undefined);
+      killed.push(session);
+    }
+
+    await this.runMaintenance(true);
+    return {
+      runtime: 'tmux',
+      scanned: snapshot.tmuxSessions.length,
+      killed,
+      kept,
+    };
+  }
+
+  async stopWorkerSession(sessionKey: string): Promise<WorkerStopReport> {
+    const target = sessionKey.trim();
+    if (!target) {
+      throw new Error('worker_session_required');
+    }
+
+    const isTmuxRuntime = this.config.WORKER_RUNTIME === 'tmux';
+    if (isTmuxRuntime) {
+      const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+      if (!target.startsWith(sessionPrefix)) {
+        throw new Error('worker_session_out_of_scope');
+      }
+    }
+
+    const runningTask = Array.from(this.tasks.values()).find((task) => task.status === 'running' && task.assignedSession === target);
+    let cancelRequested = false;
+    if (runningTask) {
+      cancelRequested = await this.cancelTask(runningTask.id);
+    }
+
+    let tmuxStopped = false;
+    if (isTmuxRuntime) {
+      const sessions = await this.launcher.listTmuxSessions().catch((): string[] => []);
+      if (sessions.includes(target)) {
+        await this.launcher.killTmuxSession(target).catch(() => undefined);
+        tmuxStopped = true;
+      }
+    }
+
+    return {
+      session: target,
+      taskId: runningTask?.id,
+      cancelRequested,
+      tmuxStopped,
+    };
   }
 
   async submitTask(input: SubmitTaskInput) {
@@ -413,19 +572,7 @@ export class TaskOrchestrator {
       await this.persist();
 
       const memoryContext = await this.memory.readBootContext();
-      const engineOutput = await this.engine.complete({
-        sessionKey: task.assignedSession,
-        route: `task:${task.id}`,
-        text: this.buildWorkerPrompt(task.text, repo.path, launched.path, memoryContext),
-        senderId: 'control-agent',
-        metadata: {
-          taskId: task.id,
-          repoId: repo.id,
-        },
-        contextLines: [],
-        rawEvent: buildSyntheticEvent(task.assignedSession, task.text),
-        recentAttachments: [],
-      });
+      const outputText = await this.runWorkerTurn(task, repo, launched.path, memoryContext);
 
       if (task.cancelRequested) {
         this.transitionTask(task, {
@@ -438,7 +585,7 @@ export class TaskOrchestrator {
         return;
       }
 
-      const parsed = this.parseEngineOutput(engineOutput.text);
+      const parsed = this.parseEngineOutput(outputText);
       this.appendArtifact(task, {
         kind: 'summary',
         at: new Date().toISOString(),
@@ -616,6 +763,10 @@ export class TaskOrchestrator {
       await this.persist();
       this.updateParentState(task);
     } finally {
+      if (this.config.WORKER_RUNTIME === 'tmux' && task.assignedSession) {
+        await this.launcher.killTmuxSession(task.assignedSession).catch(() => undefined);
+      }
+
       if (repo && launchedPath) {
         const decision = this.launcher.shouldCleanup(task.status, {
           autoCleanup: this.config.TASK_AUTOCLEANUP,
@@ -697,6 +848,115 @@ export class TaskOrchestrator {
       'Team memory context:',
       memoryContext || '(none)',
     ].join('\n');
+  }
+
+  private async runWorkerTurn(task: TaskRecord, repo: RepoRegistration, worktreePath: string, memoryContext: string) {
+    const prompt = this.buildWorkerPrompt(task.text, repo.path, worktreePath, memoryContext);
+    if (this.config.WORKER_RUNTIME === 'tmux') {
+      return this.runWorkerTurnViaTmux(task, repo, worktreePath, prompt);
+    }
+
+    const output = await this.engine.complete({
+      sessionKey: task.assignedSession,
+      route: `task:${task.id}`,
+      text: prompt,
+      senderId: 'control-agent',
+      metadata: {
+        taskId: task.id,
+        repoId: repo.id,
+      },
+      contextLines: [],
+      rawEvent: buildSyntheticEvent(task.assignedSession, task.text),
+      recentAttachments: [],
+    });
+    return output.text;
+  }
+
+  private async runWorkerTurnViaTmux(task: TaskRecord, repo: RepoRegistration, worktreePath: string, prompt: string) {
+    const runtimeDir = path.join(worktreePath, '.talon-worker');
+    await fs.mkdir(runtimeDir, { recursive: true });
+
+    const payloadPath = path.join(runtimeDir, `${task.id}.payload.json`);
+    const stdoutPath = path.join(runtimeDir, `${task.id}.stdout.log`);
+    const stderrPath = path.join(runtimeDir, `${task.id}.stderr.log`);
+    const exitPath = path.join(runtimeDir, `${task.id}.exit.code`);
+    const scriptPath = path.join(runtimeDir, `${task.id}.run.sh`);
+
+    const payload = JSON.stringify({
+      kind: 'agent_turn',
+      route: `task:${task.id}`,
+      session: task.assignedSession,
+      sender: 'control-agent',
+      message: prompt,
+      metadata: {
+        taskId: task.id,
+        repoId: repo.id,
+      },
+      context: [],
+      attachments: [],
+    });
+    await fs.writeFile(payloadPath, payload, { encoding: 'utf8' });
+    await fs.rm(stdoutPath, { force: true }).catch(() => undefined);
+    await fs.rm(stderrPath, { force: true }).catch(() => undefined);
+    await fs.rm(exitPath, { force: true }).catch(() => undefined);
+
+    const cmdTokens = [this.config.ENGINE_COMMAND, ...splitShellArgs(this.config.ENGINE_ARGS)];
+    const quotedCmdTokens = cmdTokens.map((token) => shellQuote(token)).join(' ');
+    const script = [
+      '#!/usr/bin/env bash',
+      'set -uo pipefail',
+      `PAYLOAD=$(cat ${shellQuote(payloadPath)})`,
+      `OUT=${shellQuote(stdoutPath)}`,
+      `ERR=${shellQuote(stderrPath)}`,
+      `EXIT=${shellQuote(exitPath)}`,
+      `CMD=(${quotedCmdTokens})`,
+      'set +e',
+      '"${CMD[@]}" "$PAYLOAD" >"$OUT" 2>"$ERR"',
+      'STATUS=$?',
+      'set -e',
+      'echo "$STATUS" > "$EXIT"',
+    ].join('\n');
+    await fs.writeFile(scriptPath, script, { encoding: 'utf8', mode: 0o755 });
+
+    await this.launcher.startTmuxSession(task.assignedSession, worktreePath, `bash ${shellQuote(scriptPath)}`);
+    task.events.push({
+      at: new Date().toISOString(),
+      kind: 'tmux_worker_started',
+      message: `tmux worker session started (${task.assignedSession}).`,
+      details: toEventDetails({
+        session: task.assignedSession,
+        worktreePath,
+      }),
+    });
+    await this.persist();
+
+    const deadline = Date.now() + this.config.ENGINE_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+      const done = await fs
+        .access(exitPath)
+        .then(() => true)
+        .catch(() => false);
+      if (done) break;
+      await new Promise((resolve) => setTimeout(resolve, this.config.WORKER_TMUX_POLL_MS));
+    }
+
+    const exitRaw = await fs.readFile(exitPath, { encoding: 'utf8' }).catch(() => '');
+    if (!exitRaw.trim()) {
+      await this.launcher.killTmuxSession(task.assignedSession).catch(() => undefined);
+      throw new Error(`tmux worker timed out waiting for completion (session=${task.assignedSession})`);
+    }
+
+    const exitCode = Number.parseInt(exitRaw.trim(), 10);
+    const stdout = await fs.readFile(stdoutPath, { encoding: 'utf8' }).catch(() => '');
+    const stderr = await fs.readFile(stderrPath, { encoding: 'utf8' }).catch(() => '');
+
+    if (Number.isNaN(exitCode) || exitCode !== 0) {
+      throw new Error(
+        `tmux worker failed with code=${Number.isNaN(exitCode) ? 'unknown' : exitCode} stderr=${stderr.slice(0, 400) || '(empty)'}`,
+      );
+    }
+
+    return stdout.trim();
   }
 
   private parseEngineOutput(text: string): ParsedEngineOutput {
@@ -1142,6 +1402,22 @@ export class TaskOrchestrator {
           .filter((value): value is string => Boolean(value)),
       );
       await this.worktree.cleanupStale(this.config.WORKTREE_STALE_HOURS, activeWorktreePaths);
+
+      if (this.config.WORKER_RUNTIME === 'tmux') {
+        const activeWorkerSessions = new Set(
+          Array.from(this.tasks.values())
+            .filter((task) => task.status === 'running')
+            .map((task) => task.assignedSession)
+            .filter((value): value is string => Boolean(value)),
+        );
+        const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+        const tmuxSessions = await this.launcher.listTmuxSessions();
+        for (const sessionName of tmuxSessions) {
+          if (!sessionName.startsWith(sessionPrefix)) continue;
+          if (activeWorkerSessions.has(sessionName)) continue;
+          await this.launcher.killTmuxSession(sessionName).catch(() => undefined);
+        }
+      }
     } finally {
       this.lastMaintenanceAt = Date.now();
       this.maintenanceInFlight = false;

@@ -282,9 +282,10 @@ const probeRoute = async (route: string): Promise<ProbeResult> => {
 };
 
 const runOperatorSummary = async (asJson: boolean) => {
-  const [health, status, release, sentry] = await Promise.all([
+  const [health, status, workers, release, sentry] = await Promise.all([
     probeRoute('/health'),
     probeRoute('/status'),
+    probeRoute('/workers'),
     probeRoute('/release/status'),
     probeRoute('/sentry/status'),
   ]);
@@ -294,6 +295,7 @@ const runOperatorSummary = async (asJson: boolean) => {
     controlApi: baseUrl,
     health,
     status,
+    workers,
     release,
     sentry,
   };
@@ -320,6 +322,22 @@ const runOperatorSummary = async (asJson: boolean) => {
   } else {
     process.stdout.write(`runtime: unavailable (${status.error})\n`);
     if (status.hint) process.stdout.write(`next: ${status.hint}\n`);
+  }
+
+  if (workers.ok) {
+    const payload = workers.payload as {
+      runtime?: string;
+      activeSessions?: string[];
+      orphanedSessions?: string[];
+    };
+    process.stdout.write(
+      `workers: runtime=${payload.runtime || 'n/a'} active=${payload.activeSessions?.length ?? 0} orphaned=${payload.orphanedSessions?.length ?? 0}\n`,
+    );
+  } else if (workers.error === 'not_configured') {
+    process.stdout.write('workers: not configured\n');
+  } else {
+    process.stdout.write(`workers: unavailable (${workers.error})\n`);
+    if (workers.hint) process.stdout.write(`next: ${workers.hint}\n`);
   }
 
   if (release.ok) {
@@ -356,6 +374,7 @@ const help = () => {
   process.stdout.write('  doctor\n');
   process.stdout.write('  env get|set|list|sync\n');
   process.stdout.write('  tasks list|get|create|retry|cancel\n');
+  process.stdout.write('  workers list|cleanup|stop [--session <workerSession>]\n');
   process.stdout.write('  repos list|register|remove\n');
   process.stdout.write('  deploy|update [--source <path>]\n');
   process.stdout.write('  rollback [target]\n');
@@ -526,6 +545,34 @@ const main = async () => {
     }
 
     fail(`unknown tasks command: ${sub}`, 'Use: tasks list|get|create|retry|cancel');
+  }
+
+  if (command === 'workers') {
+    const sub = args[0] || 'list';
+
+    if (sub === 'list') {
+      json(await request('GET', '/workers'));
+      return;
+    }
+
+    if (sub === 'cleanup') {
+      json(await request('POST', '/workers/cleanup'));
+      return;
+    }
+
+    if (sub === 'stop') {
+      const session = getFlag(args, 'session') || args[1];
+      if (!session) {
+        fail(
+          'workers stop requires --session <workerSession>',
+          'Example: talonbot workers stop --session dev-agent-my-repo-task-1234',
+        );
+      }
+      json(await request('POST', `/workers/${encodeURIComponent(session)}/stop`));
+      return;
+    }
+
+    fail(`unknown workers command: ${sub}`, 'Use: workers list|cleanup|stop');
   }
 
   if (command === 'repos') {
