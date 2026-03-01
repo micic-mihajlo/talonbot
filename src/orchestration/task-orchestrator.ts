@@ -289,6 +289,14 @@ export class TaskOrchestrator {
       throw new Error('worker_session_required');
     }
 
+    const isTmuxRuntime = this.config.WORKER_RUNTIME === 'tmux';
+    if (isTmuxRuntime) {
+      const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
+      if (!target.startsWith(sessionPrefix)) {
+        throw new Error('worker_session_out_of_scope');
+      }
+    }
+
     const runningTask = Array.from(this.tasks.values()).find((task) => task.status === 'running' && task.assignedSession === target);
     let cancelRequested = false;
     if (runningTask) {
@@ -296,11 +304,7 @@ export class TaskOrchestrator {
     }
 
     let tmuxStopped = false;
-    if (this.config.WORKER_RUNTIME === 'tmux') {
-      const sessionPrefix = `${this.config.WORKER_SESSION_PREFIX}-`;
-      if (!target.startsWith(sessionPrefix)) {
-        throw new Error('worker_session_out_of_scope');
-      }
+    if (isTmuxRuntime) {
       const sessions = await this.launcher.listTmuxSessions().catch((): string[] => []);
       if (sessions.includes(target)) {
         await this.launcher.killTmuxSession(target).catch(() => undefined);
