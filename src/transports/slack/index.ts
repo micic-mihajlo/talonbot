@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { App, LogLevel } from '@slack/bolt';
 import type { AppConfig } from '../../config.js';
 import type { ControlPlane } from '../../control/index.js';
@@ -5,14 +6,45 @@ import { createLogger } from '../../utils/logger.js';
 import { InboundMessage } from '../../shared/protocol.js';
 import { isAllowedSlack } from '../guards.js';
 import { config as envConfig } from '../../config.js';
+import { TransportOutbox } from '../outbox.js';
 
 const logger = createLogger('transports.slack', envConfig.LOG_LEVEL as any);
 
 export class SlackTransport {
   private app?: App;
   private botUserId?: string;
+  private outbox?: TransportOutbox<{ channelId: string; threadId?: string; text: string }>;
 
   constructor(private readonly config: AppConfig, private readonly control: ControlPlane) {}
+
+  private outboxKey(prefix: string, input: { channelId: string; threadId?: string; text: string }) {
+    const hash = crypto.createHash('sha1').update(input.text).digest('hex');
+    return `${prefix}:${input.channelId}:${input.threadId || 'main'}:${hash}`;
+  }
+
+  private async sendViaApi(message: { channelId: string; threadId?: string; text: string }) {
+    if (!this.app) {
+      throw new Error('slack_app_not_ready');
+    }
+
+    await this.app.client.chat.postMessage({
+      channel: message.channelId,
+      text: message.text,
+      thread_ts: message.threadId,
+      mrkdwn: true,
+    });
+  }
+
+  private async enqueueOutbound(prefix: string, message: { channelId: string; threadId?: string; text: string }) {
+    if (!this.outbox) {
+      throw new Error('slack_outbox_not_ready');
+    }
+
+    await this.outbox.enqueue({
+      idempotencyKey: this.outboxKey(prefix, message),
+      payload: message,
+    });
+  }
 
   private buildInboundMessage(message: any, threadTs: string | undefined, botUserId: string): InboundMessage {
     const attachments = (message.files || []).map((file: { id?: string; name?: string; mimetype?: string; url_private?: string }) => ({
@@ -70,6 +102,25 @@ export class SlackTransport {
       logLevel: LogLevel.INFO,
     });
 
+    this.outbox = new TransportOutbox(
+      `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.slack`,
+      async (message) => {
+        await this.sendViaApi(message);
+      },
+      this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
+      this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
+      this.config.TRANSPORT_OUTBOX_MAX_RETRIES,
+      logger,
+    );
+    await this.outbox.initialize();
+    this.control.registerOutboundSender('slack', async (message) => {
+      await this.enqueueOutbound('notify', {
+        channelId: message.channelId,
+        threadId: message.threadId,
+        text: message.text,
+      });
+    });
+
     this.app.message(async (args: any) => {
       const message = args.message as any;
       if (!message || message.subtype || !message.text || !('user' in message)) return;
@@ -92,12 +143,10 @@ export class SlackTransport {
 
       await this.control.dispatch(inbound, {
         reply: async (text) => {
-          if (!this.app) return;
-          await args.client?.chat.postMessage({
-            channel: message.channel,
+          await this.enqueueOutbound(`dispatch:${message.ts}`, {
+            channelId: message.channel,
+            threadId: isDM ? undefined : thread || message.ts,
             text,
-            thread_ts: isDM ? undefined : (thread || message.ts),
-            mrkdwn: true,
           });
         },
       });
@@ -112,6 +161,9 @@ export class SlackTransport {
   }
 
   async stop() {
+    this.control.unregisterOutboundSender('slack');
+    await this.outbox?.stop().catch(() => undefined);
+    this.outbox = undefined;
     if (!this.app) return;
     await this.app.stop();
     logger.info('Slack transport stopped');
