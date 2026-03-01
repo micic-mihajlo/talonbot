@@ -93,9 +93,103 @@ jobs:
       - name: Bootstrap/install smoke
         run: npm run test:smoke:bootstrap
 
+  e2e-process:
+    runs-on: [self-hosted, linux, pi]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Launch runtime in process-engine mode
+        run: |
+          set -euo pipefail
+          PI_BIN=$(command -v pi)
+          if [ -z "$PI_BIN" ]; then
+            echo "pi not found on runner PATH"
+            exit 1
+          fi
+
+          CONTROL_AUTH_TOKEN=e2e-process-control-token-abcdefghijklmnopqrstuvwxyz \
+          CONTROL_HTTP_PORT=8091 \
+          ENGINE_MODE=process \
+          ENGINE_COMMAND="$PI_BIN" \
+          ENGINE_ARGS="-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools" \
+          ENGINE_CWD=/tmp/talonbot-e2e-engine \
+          ENGINE_TIMEOUT_MS=300000 \
+          PI_SKIP_VERSION_CHECK=1 \
+          CHAT_DISPATCH_MODE=task \
+          CHAT_REQUIRE_VERIFIED_PR=true \
+          DISCORD_ENABLED=false \
+          SLACK_ENABLED=false \
+          node dist/index.js >/tmp/talonbot-e2e-process.log 2>&1 &
+          runtime_pid=$!
+
+          cleanup() {
+            kill "$runtime_pid" 2>/dev/null || true
+            wait "$runtime_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:8091/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+            http://127.0.0.1:8091/health >/dev/null
+
+          DISPATCH=$(curl -sf -H "Content-Type: application/json" \
+            -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+            -d '{"source":"socket","channelId":"e2e","text":"chat: say e2e hello","senderId":"e2e"}' \
+            http://127.0.0.1:8091/dispatch)
+          echo "$DISPATCH"
+          echo "$DISPATCH" | grep -q '"accepted":true'
+          echo "$DISPATCH" | grep -q '"mode":"session"'
+
+          curl -sf -H "Content-Type: application/json" \
+            -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+            -d '{"id":"repo","path":"'"$PWD"'","defaultBranch":"main","remote":"origin","isDefault":true}' \
+            http://127.0.0.1:8091/repos/register >/dev/null
+
+          TASK=$(curl -sf -H "Content-Type: application/json" \
+            -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+            -d '{"text":"Run strict transport task gate e2e.","repoId":"repo","source":"transport"}' \
+            http://127.0.0.1:8091/tasks)
+          echo "$TASK"
+          TASK_ID=$(echo "$TASK" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+          if [ -z "$TASK_ID" ]; then
+            echo "task id missing"
+            exit 1
+          fi
+
+          for i in $(seq 1 120); do
+            REPORT=$(curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+              http://127.0.0.1:8091/tasks/$TASK_ID)
+            STATE=$(echo "$REPORT" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' | head -n 1)
+            if [ "$STATE" = "blocked" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          FINAL=$(curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
+            http://127.0.0.1:8091/tasks/$TASK_ID)
+          echo "$FINAL"
+          echo "$FINAL" | grep -q '"status":"blocked"'
+          echo "$FINAL" | grep -q 'verified_pr_required'
+
   p0-gates:
     if: ${{ always() }}
-    needs: [build, lint, typecheck, tests, smoke]
+    needs: [build, lint, typecheck, tests, smoke, e2e-process]
     runs-on: ubuntu-latest
     steps:
       - name: Validate required P0 gates
@@ -107,6 +201,7 @@ jobs:
             "typecheck:${{ needs.typecheck.result }}"
             "tests:${{ needs.tests.result }}"
             "smoke:${{ needs.smoke.result }}"
+            "e2e-process:${{ needs.e2e-process.result }}"
           )
 
           for gate in "${gates[@]}"; do
