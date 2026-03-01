@@ -105,6 +105,21 @@ describe('startup validation', () => {
     ).toBe(true);
   });
 
+  it('errors in strict mode when task-first chat has no registered repos', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      STARTUP_INTEGRITY_MODE: 'strict',
+      CHAT_DISPATCH_MODE: 'task',
+      CHAT_REQUIRE_VERIFIED_PR: false,
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+
+    const issue = issues.find((entry) => entry.code === 'chat_task_mode_requires_repo');
+    expect(issue?.severity).toBe('error');
+  });
+
   it('fails fast when startup validation includes errors', () => {
     const input = {
       ...defaultConfig,

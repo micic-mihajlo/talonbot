@@ -20,6 +20,7 @@ export interface RuntimeServices {
   release?: ReleaseManager;
   sentry?: SentryAgent;
   diagnosticsOutputDir?: string;
+  startupReconciliation?: unknown;
 }
 
 const setSecurityHeaders = (res: http.ServerResponse) => {
@@ -820,6 +821,7 @@ export const createHttpServer = (
           tasks: services?.tasks,
           release: services?.release,
           audit,
+          reconciliation: services?.startupReconciliation,
         });
 
         writeJson(res, 200, bundle);
