@@ -21,6 +21,8 @@ import { buildEngine } from '../engine/index.js';
 import type { AppConfig } from '../config.js';
 import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases.js';
 import { createLogger } from '../utils/logger.js';
+import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
+import type { TaskProgressReport, TaskStatus } from '../orchestration/types.js';
 
 export interface DispatchResult {
   accepted: boolean;
@@ -60,9 +62,15 @@ interface SessionLookup {
   session: AgentSession;
 }
 
+interface ControlPlaneOptions {
+  tasks?: TaskOrchestrator;
+  taskUpdatePollMs?: number;
+}
+
 const STOP_COMMANDS = new Set(['!stop', '/stop', 'stop', '!shutdown', '/shutdown', 'shutdown']);
 const STATUS_COMMANDS = new Set(['!status', '/status', 'status']);
 const ALIAS_COMMANDS = new Set(['!alias', '/alias', 'alias']);
+const TERMINAL_TASK_STATES = new Set<TaskStatus>(['done', 'failed', 'cancelled']);
 
 const HELP_TEXT =
   'Commands: !status [session|alias], !stop [session|alias], !alias set <name> [session|alias], !alias remove <name>, !alias list, !alias resolve <name>';
@@ -87,18 +95,28 @@ export class ControlPlane {
   private readonly sessions = new Map<string, SessionLookup>();
   private readonly sessionSockets = new Map<string, SessionSocketState>();
   private readonly turnEndSubscriptions = new Map<string, Set<TurnEndSubscription>>();
+  private readonly taskWatchers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly seenEventIds = new Map<string, number>();
   private readonly store: SessionStore;
   private readonly controlSessionDir: string;
+  private readonly tasks?: TaskOrchestrator;
+  private readonly taskUpdatePollMs: number;
   private aliases: AliasMap = {};
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly config: AppConfig, private readonly engineFactory = buildEngine) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly engineFactory = buildEngine,
+    options: ControlPlaneOptions = {},
+  ) {
     this.logger = createLogger('control.daemon', config.LOG_LEVEL as any);
     const expandedDataPath = config.DATA_DIR.replace('~', process.env.HOME || '');
     const expandedControlPath = config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || '');
     const controlDir = path.dirname(expandedControlPath);
     this.store = new SessionStore(path.join(expandedDataPath, 'sessions'));
     this.controlSessionDir = path.join(controlDir, 'session-control');
+    this.tasks = options.tasks;
+    this.taskUpdatePollMs = Math.max(500, options.taskUpdatePollMs ?? 4000);
   }
 
   async initialize() {
@@ -112,12 +130,36 @@ export class ControlPlane {
     const route = routeFromMessage(message);
     const normalized = message.text.trim();
 
-    const command = this.parseCommand(normalized);
+    if (this.hasSeenEvent(message.id)) {
+      return {
+        accepted: true,
+        reason: 'duplicate',
+        sessionKey: route.sessionKey,
+      };
+    }
+    this.touchSeen(message.id);
+
+    const directive = this.parseDispatchDirective(normalized);
+    if (!directive.text.length) {
+      await callbacks.reply('Message text is required.');
+      return {
+        accepted: false,
+        reason: 'empty_message',
+        sessionKey: route.sessionKey,
+      };
+    }
+    const routedMessage = directive.text === normalized ? message : { ...message, text: directive.text };
+
+    const command = this.parseCommand(routedMessage.text);
     if (command) {
       return this.handleCommand(command, route, callbacks);
     }
 
-    return this.dispatchToSession(route.sessionKey, message, callbacks);
+    if (this.shouldDispatchTaskFlow(directive.modeOverride)) {
+      return this.dispatchToTask(route.sessionKey, routedMessage, callbacks);
+    }
+
+    return this.dispatchToSession(route.sessionKey, routedMessage, callbacks);
   }
 
   async dispatchToSession(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
@@ -722,6 +764,198 @@ export class ControlPlane {
     };
   }
 
+  private parseDispatchDirective(text: string): { modeOverride?: 'session' | 'task'; text: string } {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return { text: '' };
+    }
+
+    const sessionMatch = trimmed.match(/^(?:\/|!)?chat(?:\s+|:\s*)/i);
+    if (sessionMatch) {
+      return {
+        modeOverride: 'session',
+        text: trimmed.slice(sessionMatch[0].length).trim(),
+      };
+    }
+
+    const taskMatch = trimmed.match(/^(?:\/|!)?task(?:\s+|:\s*)/i);
+    if (taskMatch) {
+      return {
+        modeOverride: 'task',
+        text: trimmed.slice(taskMatch[0].length).trim(),
+      };
+    }
+
+    return { text: trimmed };
+  }
+
+  private shouldDispatchTaskFlow(modeOverride?: 'session' | 'task') {
+    if (!this.tasks) {
+      return false;
+    }
+
+    const effectiveMode = modeOverride || this.config.CHAT_DISPATCH_MODE;
+    if (effectiveMode === 'session') {
+      return false;
+    }
+
+    if (effectiveMode === 'hybrid') {
+      return modeOverride === 'task';
+    }
+
+    return true;
+  }
+
+  private async dispatchToTask(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
+    if (!this.tasks) {
+      return this.dispatchToSession(sessionKey, message, callbacks);
+    }
+
+    const text = message.text.trim();
+    if (!text.length) {
+      await callbacks.reply('Task text is required.');
+      return {
+        accepted: false,
+        reason: 'task_text_required',
+        sessionKey,
+      };
+    }
+
+    try {
+      const task = await this.tasks.submitTask({
+        text,
+        sessionKey,
+        source: 'transport',
+      });
+      await callbacks.reply(
+        `Queued task ${task.id} (repo: ${task.repoId}). I will post progress and final artifacts in this thread.`,
+      );
+      this.watchTaskLifecycle(task.id, callbacks.reply);
+      return {
+        accepted: true,
+        reason: 'task_queued',
+        sessionKey,
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (reason === 'repo_not_found') {
+        await callbacks.reply(
+          'No repository is registered yet. Register one first: `talonbot repos register --id <repo-id> --path /absolute/path --default true`.',
+        );
+        return {
+          accepted: false,
+          reason,
+          sessionKey,
+        };
+      }
+
+      await callbacks.reply(`Task dispatch failed: ${reason}`);
+      return {
+        accepted: false,
+        reason,
+        sessionKey,
+      };
+    }
+  }
+
+  private watchTaskLifecycle(taskId: string, reply: (text: string) => Promise<void>) {
+    if (!this.tasks || this.taskWatchers.has(taskId)) {
+      return;
+    }
+
+    let announcedRunning = false;
+    let lastStatus: TaskStatus | undefined;
+
+    const tick = async () => {
+      if (!this.tasks) {
+        this.clearTaskWatcher(taskId);
+        return;
+      }
+
+      const task = this.tasks.getTask(taskId);
+      if (!task) {
+        this.clearTaskWatcher(taskId);
+        return;
+      }
+
+      if (task.status !== lastStatus) {
+        lastStatus = task.status;
+        if (task.status === 'running' && !announcedRunning) {
+          announcedRunning = true;
+          await this.safeReply(
+            reply,
+            `Task ${task.id} is running (worker session: ${task.assignedSession || 'n/a'}).`,
+            { taskId, state: task.status },
+          );
+        }
+      }
+
+      if (!TERMINAL_TASK_STATES.has(task.status)) {
+        return;
+      }
+
+      const report = this.tasks.buildTaskReport(task.id);
+      await this.safeReply(reply, this.renderTaskCompletion(task.id, task.status, report), {
+        taskId,
+        state: task.status,
+      });
+      this.clearTaskWatcher(taskId);
+    };
+
+    const timer = setInterval(() => {
+      void tick();
+    }, this.taskUpdatePollMs);
+    this.taskWatchers.set(taskId, timer);
+    void tick();
+  }
+
+  private clearTaskWatcher(taskId: string) {
+    const timer = this.taskWatchers.get(taskId);
+    if (!timer) {
+      return;
+    }
+    clearInterval(timer);
+    this.taskWatchers.delete(taskId);
+  }
+
+  private renderTaskCompletion(taskId: string, status: TaskStatus, report: TaskProgressReport | null) {
+    const baseMessage = report?.message || `Task ${taskId} finished with state ${status}.`;
+    const evidence: string[] = [];
+
+    if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
+    if (report?.evidence.commitSha) evidence.push(`commit ${report.evidence.commitSha}`);
+    if (report?.evidence.branch) evidence.push(`branch ${report.evidence.branch}`);
+    if (report?.evidence.checksSummary) evidence.push(`checks ${report.evidence.checksSummary}`);
+
+    const evidenceLine = evidence.length > 0 ? ` Evidence: ${evidence.join(' | ')}.` : '';
+
+    if (status === 'done') {
+      return `Task ${taskId} completed. ${baseMessage}${evidenceLine}`;
+    }
+
+    if (status === 'failed') {
+      return `Task ${taskId} failed. ${baseMessage}${evidenceLine}`;
+    }
+
+    return `Task ${taskId} cancelled.${evidenceLine}`;
+  }
+
+  private async safeReply(
+    reply: (text: string) => Promise<void>,
+    text: string,
+    metadata: { taskId: string; state: TaskStatus },
+  ) {
+    try {
+      await reply(text);
+    } catch (error) {
+      this.logger.warn('failed to post task lifecycle update', {
+        taskId: metadata.taskId,
+        state: metadata.state,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private buildRunnerCallbacks(callbacks: RunnerContext): RunnerCallbacks {
     return {
       reply: callbacks.reply,
@@ -1125,8 +1359,32 @@ export class ControlPlane {
       clearInterval(this.cleanupTimer);
     }
 
+    for (const timer of this.taskWatchers.values()) {
+      clearInterval(timer);
+    }
+    this.taskWatchers.clear();
+
     for (const sessionKey of Array.from(this.sessions.keys())) {
       this.stopSession(sessionKey).catch(() => undefined);
+    }
+  }
+
+  private hasSeenEvent(eventId: string) {
+    const seenAt = this.seenEventIds.get(eventId);
+    if (!seenAt) {
+      return false;
+    }
+    return Date.now() - seenAt <= this.config.SESSION_DEDUPE_WINDOW_MS;
+  }
+
+  private touchSeen(eventId: string) {
+    const now = Date.now();
+    this.seenEventIds.set(eventId, now);
+    const cutoff = now - this.config.SESSION_DEDUPE_WINDOW_MS;
+    for (const [id, seenAt] of this.seenEventIds.entries()) {
+      if (seenAt < cutoff) {
+        this.seenEventIds.delete(id);
+      }
     }
   }
 }

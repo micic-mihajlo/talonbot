@@ -119,7 +119,7 @@ export class DiscordTransport {
       const stopTyping = startTypingHeartbeat(message.channel as { sendTyping?: () => Promise<unknown> }, this.config.DISCORD_TYPING_ENABLED);
 
       try {
-        await this.control.dispatch(inbound, {
+        const result = await this.control.dispatch(inbound, {
           reply: async (text) => {
             if (!this.client || !this.client.user) return;
 
@@ -142,7 +142,7 @@ export class DiscordTransport {
 
         if (this.config.DISCORD_REACTIONS_ENABLED) {
           try {
-            await message.react('✅');
+            await message.react(result.accepted ? '✅' : '⚠️');
           } catch {
             // ignore reaction failures
           }

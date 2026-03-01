@@ -20,6 +20,10 @@
 - `CONTROL_HTTP_PORT` default: `8080`
 - `CONTROL_AUTH_TOKEN` required for secured control-plane access
 - `CONTROL_SOCKET_PATH` default: `~/.local/share/talonbot/control.sock`
+- `CHAT_DISPATCH_MODE` values: `task`, `session`, `hybrid` (default `task`)
+  - `task`: non-command transport messages create orchestrator tasks.
+  - `session`: non-command messages go to conversational session engine.
+  - `hybrid`: defaults to `session`; use `task: ...` / `/task ...` to force task dispatch.
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
 - `PI_SKIP_VERSION_CHECK=1` is recommended for process-mode `pi` engine runs to avoid version-check stalls.
 - `ENGINE_PROVIDER` optional explicit provider override passed to engine process (appended as `--provider`).

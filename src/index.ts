@@ -57,12 +57,14 @@ const run = async () => {
     throw new StartupValidationError(startupIssues);
   }
 
-  const control = new ControlPlane(config);
-  await control.initialize();
-  const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
-
   const taskOrchestrator = new TaskOrchestrator(config);
   await taskOrchestrator.initialize();
+
+  const control = new ControlPlane(config, undefined, {
+    tasks: taskOrchestrator,
+  });
+  await control.initialize();
+  const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
 
   const sentry = config.SENTRY_ENABLED
     ? new SentryAgent({

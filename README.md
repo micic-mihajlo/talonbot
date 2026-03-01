@@ -65,6 +65,7 @@ cp systemd/talonbot.env.template .env
 # edit .env:
 # DISCORD_ENABLED=true
 # DISCORD_TOKEN=your-discord-bot-token
+# CHAT_DISPATCH_MODE=task
 # CONTROL_AUTH_TOKEN=choose-a-long-random-string
 ./install.sh --start
 ```
@@ -87,6 +88,8 @@ curl -s -H "Content-Type: application/json" -d '{"source":"discord","channelId":
 ```
 
 You should get an accepted response from `/dispatch` and a reply text in logs/JSON.
+
+When `CHAT_DISPATCH_MODE=task` (default), non-command Discord/Slack messages queue orchestration tasks and stream task lifecycle updates back to the same thread. Use `chat: ...` (or `/chat ...`) to force plain conversational session mode for a single message.
 
 Run health/config sanity checks locally with:
 
