@@ -24,6 +24,8 @@
   - `task`: non-command transport messages create orchestrator tasks.
   - `session`: non-command messages go to conversational session engine.
   - `hybrid`: defaults to `session`; use `task: ...` / `/task ...` to force task dispatch.
+- `CHAT_REQUIRE_VERIFIED_PR` default: `true` (chat-sourced tasks must produce a verified PR URL before `done`)
+- `CHAT_TASK_UPDATE_POLL_MS` default: `4000` (fallback notifier reconciliation interval)
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
 - `PI_SKIP_VERSION_CHECK=1` is recommended for process-mode `pi` engine runs to avoid version-check stalls.
 - `ENGINE_PROVIDER` optional explicit provider override passed to engine process (appended as `--provider`).
@@ -46,6 +48,7 @@
 - `PR_CHECK_POLL_MS` default: `15000` (15 sec)
 - `WORKTREE_STALE_HOURS` default: `24`
 - `FAILED_WORKTREE_RETENTION_HOURS` default: `24` (`0` = cleanup failed/blocked worktrees immediately)
+- `TASK_RECOVER_ON_STARTUP` default: `true` (re-queues recovered running tasks on boot)
 - `TASK_STUCK_MINUTES` default: `30` (running-task stale threshold for orchestration health monitor)
 - `TASK_QUEUE_STALE_MINUTES` default: `30` (queued-task stale threshold for orchestration health monitor)
 
@@ -62,6 +65,10 @@
 - `BRIDGE_RETRY_MAX_MS` default: `30000`
 - `BRIDGE_MAX_RETRIES` default: `5`
 - `BRIDGE_STATE_FILE` default: `<DATA_DIR>/bridge/state.json`
+- `TRANSPORT_OUTBOX_RETRY_BASE_MS` default: `1000`
+- `TRANSPORT_OUTBOX_RETRY_MAX_MS` default: `30000`
+- `TRANSPORT_OUTBOX_MAX_RETRIES` default: `10`
+- `TRANSPORT_OUTBOX_STATE_FILE` default: `~/.local/share/talonbot/transports/outbox.json` (per-transport suffixes `.discord` / `.slack`)
 - `SENTRY_ENABLED` default: `true`
 - `SENTRY_POLL_MS` default: `10000`
 - `SENTRY_STATE_FILE` default: `<DATA_DIR>/sentry/incidents.jsonl`
