@@ -53,6 +53,11 @@ fi
 curl -sS -H "Authorization: Bearer ${TOKEN}" "http://127.0.0.1:${PORT}/status" >/dev/null
 curl -sS -H "Authorization: Bearer ${TOKEN}" "http://127.0.0.1:${PORT}/sessions" >/dev/null
 curl -sS -H "Authorization: Bearer ${TOKEN}" "http://127.0.0.1:${PORT}/release/status" >/dev/null
+curl -sS \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -d "{\"id\":\"smoke-repo\",\"path\":\"${PWD}\",\"defaultBranch\":\"main\",\"remote\":\"origin\",\"isDefault\":true}" \
+  "http://127.0.0.1:${PORT}/repos/register" >/dev/null
 
 curl -sS \
   -H "Content-Type: application/json" \
