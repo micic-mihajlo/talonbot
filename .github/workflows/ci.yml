@@ -188,7 +188,7 @@ jobs:
           echo "$FINAL" | grep -q 'verified_pr_required'
 
   p0-gates:
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && needs.e2e-process.result != 'cancelled' }}
     needs: [build, lint, typecheck, tests, smoke, e2e-process]
     runs-on: ubuntu-latest
     steps:
