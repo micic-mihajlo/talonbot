@@ -108,6 +108,10 @@ export class TransportOutbox<TPayload> {
       if (existing && existing.status !== 'poison') {
         return existing;
       }
+      if (existing) {
+        this.records.delete(existingId);
+      }
+      this.byKey.delete(key);
     }
 
     const now = new Date().toISOString();

@@ -783,7 +783,7 @@ export class ControlPlane {
       return { text: '' };
     }
 
-    const sessionMatch = trimmed.match(/^(?:\/|!)?chat(?:\s+|:\s*)/i);
+    const sessionMatch = trimmed.match(/^(?:[\/!]chat(?:\s+|:\s*)|chat:\s*)/i);
     if (sessionMatch) {
       return {
         modeOverride: 'session',
@@ -791,7 +791,7 @@ export class ControlPlane {
       };
     }
 
-    const taskMatch = trimmed.match(/^(?:\/|!)?task(?:\s+|:\s*)/i);
+    const taskMatch = trimmed.match(/^(?:[\/!]task(?:\s+|:\s*)|task:\s*)/i);
     if (taskMatch) {
       return {
         modeOverride: 'task',

@@ -69,6 +69,17 @@ export class TaskUpdateNotifier {
         : [];
     await this.store.pruneTaskBindings(snapshot);
     await this.reloadBindings();
+    for (const binding of this.bindings.values()) {
+      const task = this.tasks.getTask(binding.taskId);
+      if (!task) {
+        continue;
+      }
+      if (binding.lastNotifiedStatus && binding.lastNotifiedStatus !== task.status) {
+        binding.lastNotifiedStatus = undefined;
+        binding.lastNotifiedAt = undefined;
+        await this.store.upsertTaskBinding(binding);
+      }
+    }
 
     const lifecycleCapable = this.tasks as unknown as {
       onLifecycle?: (listener: (event: { taskId: string; at?: string }) => void) => () => void;
