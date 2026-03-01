@@ -74,7 +74,7 @@ jobs:
 
           curl -sf -H "Content-Type: application/json" \
             -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
-            -d '{"id":"repo","path":"'"$PWD"'","defaultBranch":"main","remote":"origin","isDefault":true}' \
+            -d '{"id":"repo","path":"'"$PWD"'","defaultBranch":"'"${GITHUB_SHA}"'","remote":"origin","isDefault":true}' \
             http://127.0.0.1:8092/repos/register >/dev/null
 
           TASK=$(curl -sf -H "Content-Type: application/json" \

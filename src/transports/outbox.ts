@@ -205,7 +205,7 @@ export class TransportOutbox<TPayload> {
   private async persist() {
     const file = expandPath(this.stateFile);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
+    const tmp = `${file}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}.tmp`;
     const payload: PersistedOutbox<TPayload> = {
       version: 1,
       records: this.list(),
