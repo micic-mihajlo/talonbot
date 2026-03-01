@@ -69,10 +69,12 @@ export class TaskUpdateNotifier {
     await this.store.pruneTaskBindings(snapshot);
     await this.reloadBindings();
 
-    const maybeSubscribe = (this.tasks as unknown as { onLifecycle?: (fn: (taskId: string) => void) => () => void }).onLifecycle;
+    const maybeSubscribe = (this.tasks as unknown as {
+      onLifecycle?: (listener: (event: { taskId: string }) => void) => () => void;
+    }).onLifecycle;
     if (typeof maybeSubscribe === 'function') {
-      this.unsubLifecycle = maybeSubscribe((taskId) => {
-        void this.publish(taskId, 'event');
+      this.unsubLifecycle = maybeSubscribe((event) => {
+        void this.publish(event.taskId, 'event');
       });
     }
 
