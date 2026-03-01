@@ -41,6 +41,8 @@ export interface ControlDispatchResult {
   accepted: boolean;
   reason?: string;
   sessionKey?: string;
+  mode?: 'task' | 'session';
+  taskId?: string;
 }
 
 export interface OutboundMessage {

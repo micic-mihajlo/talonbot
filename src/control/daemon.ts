@@ -22,12 +22,15 @@ import type { AppConfig } from '../config.js';
 import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases.js';
 import { createLogger } from '../utils/logger.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
-import type { TaskProgressReport, TaskStatus } from '../orchestration/types.js';
+import { TaskUpdateNotifier, type OutboundThreadMessage, type OutboundThreadSender } from './task-update-notifier.js';
+import type { TaskThreadBinding } from './store.js';
 
 export interface DispatchResult {
   accepted: boolean;
   reason?: string;
   sessionKey?: string;
+  mode?: 'task' | 'session';
+  taskId?: string;
 }
 
 interface SessionMetadata {
@@ -64,13 +67,11 @@ interface SessionLookup {
 
 interface ControlPlaneOptions {
   tasks?: TaskOrchestrator;
-  taskUpdatePollMs?: number;
 }
 
 const STOP_COMMANDS = new Set(['!stop', '/stop', 'stop', '!shutdown', '/shutdown', 'shutdown']);
 const STATUS_COMMANDS = new Set(['!status', '/status', 'status']);
 const ALIAS_COMMANDS = new Set(['!alias', '/alias', 'alias']);
-const TERMINAL_TASK_STATES = new Set<TaskStatus>(['done', 'failed', 'cancelled']);
 
 const HELP_TEXT =
   'Commands: !status [session|alias], !stop [session|alias], !alias set <name> [session|alias], !alias remove <name>, !alias list, !alias resolve <name>';
@@ -95,12 +96,12 @@ export class ControlPlane {
   private readonly sessions = new Map<string, SessionLookup>();
   private readonly sessionSockets = new Map<string, SessionSocketState>();
   private readonly turnEndSubscriptions = new Map<string, Set<TurnEndSubscription>>();
-  private readonly taskWatchers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly seenEventIds = new Map<string, number>();
+  private readonly outboundSenders = new Map<'slack' | 'discord' | 'socket', OutboundThreadSender>();
   private readonly store: SessionStore;
   private readonly controlSessionDir: string;
   private readonly tasks?: TaskOrchestrator;
-  private readonly taskUpdatePollMs: number;
+  private readonly taskNotifier?: TaskUpdateNotifier;
   private aliases: AliasMap = {};
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
@@ -116,13 +117,24 @@ export class ControlPlane {
     this.store = new SessionStore(path.join(expandedDataPath, 'sessions'));
     this.controlSessionDir = path.join(controlDir, 'session-control');
     this.tasks = options.tasks;
-    this.taskUpdatePollMs = Math.max(500, options.taskUpdatePollMs ?? 4000);
+    if (this.tasks) {
+      this.taskNotifier = new TaskUpdateNotifier(
+        this.store,
+        this.tasks,
+        (source) => this.outboundSenders.get(source),
+        this.config.CHAT_TASK_UPDATE_POLL_MS,
+        this.logger,
+      );
+    }
   }
 
   async initialize() {
     await this.store.init();
     await this.loadAliases();
     await this.ensureControlDirectory();
+    if (this.taskNotifier) {
+      await this.taskNotifier.initialize();
+    }
     this.startCleanupTimer();
   }
 
@@ -184,6 +196,7 @@ export class ControlPlane {
       accepted: true,
       reason: 'enqueued',
       sessionKey: normalizedSessionKey,
+      mode: 'session',
     };
   }
 
@@ -827,14 +840,17 @@ export class ControlPlane {
         sessionKey,
         source: 'transport',
       });
+
+      await this.trackTaskBinding(task.id, sessionKey, message);
       await callbacks.reply(
         `Queued task ${task.id} (repo: ${task.repoId}). I will post progress and final artifacts in this thread.`,
       );
-      this.watchTaskLifecycle(task.id, callbacks.reply);
       return {
         accepted: true,
         reason: 'task_queued',
         sessionKey,
+        mode: 'task',
+        taskId: task.id,
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -846,6 +862,7 @@ export class ControlPlane {
           accepted: false,
           reason,
           sessionKey,
+          mode: 'task',
         };
       }
 
@@ -854,106 +871,45 @@ export class ControlPlane {
         accepted: false,
         reason,
         sessionKey,
+        mode: 'task',
       };
     }
   }
 
-  private watchTaskLifecycle(taskId: string, reply: (text: string) => Promise<void>) {
-    if (!this.tasks || this.taskWatchers.has(taskId)) {
+  private async trackTaskBinding(taskId: string, sessionKey: string, message: InboundMessage) {
+    if (!this.taskNotifier) {
       return;
     }
 
-    let announcedRunning = false;
-    let lastStatus: TaskStatus | undefined;
-
-    const tick = async () => {
-      if (!this.tasks) {
-        this.clearTaskWatcher(taskId);
-        return;
-      }
-
-      const task = this.tasks.getTask(taskId);
-      if (!task) {
-        this.clearTaskWatcher(taskId);
-        return;
-      }
-
-      if (task.status !== lastStatus) {
-        lastStatus = task.status;
-        if (task.status === 'running' && !announcedRunning) {
-          announcedRunning = true;
-          await this.safeReply(
-            reply,
-            `Task ${task.id} is running (worker session: ${task.assignedSession || 'n/a'}).`,
-            { taskId, state: task.status },
-          );
-        }
-      }
-
-      if (!TERMINAL_TASK_STATES.has(task.status)) {
-        return;
-      }
-
-      const report = this.tasks.buildTaskReport(task.id);
-      await this.safeReply(reply, this.renderTaskCompletion(task.id, task.status, report), {
-        taskId,
-        state: task.status,
-      });
-      this.clearTaskWatcher(taskId);
+    const binding: TaskThreadBinding = {
+      taskId,
+      source: message.source,
+      channelId: message.sourceChannelId,
+      threadId: message.sourceThreadId || undefined,
+      sessionKey,
+      createdAt: new Date().toISOString(),
     };
-
-    const timer = setInterval(() => {
-      void tick();
-    }, this.taskUpdatePollMs);
-    this.taskWatchers.set(taskId, timer);
-    void tick();
+    await this.taskNotifier.track(binding);
   }
 
-  private clearTaskWatcher(taskId: string) {
-    const timer = this.taskWatchers.get(taskId);
-    if (!timer) {
-      return;
-    }
-    clearInterval(timer);
-    this.taskWatchers.delete(taskId);
+  registerOutboundSender(source: 'slack' | 'discord' | 'socket', sender: OutboundThreadSender) {
+    this.outboundSenders.set(source, sender);
   }
 
-  private renderTaskCompletion(taskId: string, status: TaskStatus, report: TaskProgressReport | null) {
-    const baseMessage = report?.message || `Task ${taskId} finished with state ${status}.`;
-    const evidence: string[] = [];
-
-    if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
-    if (report?.evidence.commitSha) evidence.push(`commit ${report.evidence.commitSha}`);
-    if (report?.evidence.branch) evidence.push(`branch ${report.evidence.branch}`);
-    if (report?.evidence.checksSummary) evidence.push(`checks ${report.evidence.checksSummary}`);
-
-    const evidenceLine = evidence.length > 0 ? ` Evidence: ${evidence.join(' | ')}.` : '';
-
-    if (status === 'done') {
-      return `Task ${taskId} completed. ${baseMessage}${evidenceLine}`;
-    }
-
-    if (status === 'failed') {
-      return `Task ${taskId} failed. ${baseMessage}${evidenceLine}`;
-    }
-
-    return `Task ${taskId} cancelled.${evidenceLine}`;
+  unregisterOutboundSender(source: 'slack' | 'discord' | 'socket') {
+    this.outboundSenders.delete(source);
   }
 
-  private async safeReply(
-    reply: (text: string) => Promise<void>,
-    text: string,
-    metadata: { taskId: string; state: TaskStatus },
-  ) {
-    try {
-      await reply(text);
-    } catch (error) {
-      this.logger.warn('failed to post task lifecycle update', {
-        taskId: metadata.taskId,
-        state: metadata.state,
-        message: error instanceof Error ? error.message : String(error),
-      });
+  async sendOutboundThreadMessage(source: 'slack' | 'discord' | 'socket', message: OutboundThreadMessage) {
+    const sender = this.outboundSenders.get(source);
+    if (!sender) {
+      throw new Error(`outbound_sender_not_registered:${source}`);
     }
+    await sender(message);
+  }
+
+  listTaskBindings() {
+    return this.taskNotifier?.listBindings() || [];
   }
 
   private buildRunnerCallbacks(callbacks: RunnerContext): RunnerCallbacks {
@@ -1358,11 +1314,7 @@ export class ControlPlane {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
     }
-
-    for (const timer of this.taskWatchers.values()) {
-      clearInterval(timer);
-    }
-    this.taskWatchers.clear();
+    void this.taskNotifier?.stop();
 
     for (const sessionKey of Array.from(this.sessions.keys())) {
       this.stopSession(sessionKey).catch(() => undefined);

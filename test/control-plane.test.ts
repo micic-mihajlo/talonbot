@@ -338,6 +338,7 @@ describe('control plane task-first dispatch', () => {
     const config = {
       ...buildTestConfig(workingDirectory),
       CHAT_DISPATCH_MODE: 'task' as const,
+      CHAT_TASK_UPDATE_POLL_MS: 10,
     };
 
     controlPlane = new ControlPlane(
@@ -349,11 +350,14 @@ describe('control plane task-first dispatch', () => {
         },
         ping: async () => true,
       }),
-      { tasks: fakeTasks as any, taskUpdatePollMs: 10 },
+      { tasks: fakeTasks as any },
     );
-    await controlPlane.initialize();
-
     const replies: string[] = [];
+    await controlPlane.initialize();
+    controlPlane.registerOutboundSender('socket', async (message) => {
+      replies.push(message.text);
+    });
+
     const dispatch = await controlPlane.dispatch(mkInboundMessage('Implement release health checks'), {
       reply: async (text) => {
         replies.push(text);
@@ -366,7 +370,7 @@ describe('control plane task-first dispatch', () => {
     expect(engineCalls).toBe(0);
     expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
 
-    await waitFor(() => replies.some((text) => text.includes('Task task-1 completed.')), 2000);
+    await waitFor(() => replies.some((text) => text.includes('Task task-1 completed')), 2000);
     expect(replies.some((text) => text.includes('github.com/acme/repo/pull/1'))).toBe(true);
   });
 
@@ -390,9 +394,10 @@ describe('control plane task-first dispatch', () => {
       {
         ...buildTestConfig(workingDirectory),
         CHAT_DISPATCH_MODE: 'task' as const,
+        CHAT_TASK_UPDATE_POLL_MS: 10,
       },
       () => createEngine(),
-      { tasks: fakeTasks as any, taskUpdatePollMs: 10 },
+      { tasks: fakeTasks as any },
     );
     await controlPlane.initialize();
 

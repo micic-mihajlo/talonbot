@@ -309,6 +309,7 @@ export const createHttpServer = (
             accepted: true,
             reason: 'enqueued',
             sessionKey: targetSessionKey,
+            mode: 'session',
           });
           logger.info('dispatch routed to session', {
             sessionKey: targetSessionKey,
@@ -328,6 +329,8 @@ export const createHttpServer = (
           accepted: result.accepted,
           reason: result.reason,
           sessionKey: result.sessionKey,
+          mode: result.mode,
+          taskId: result.taskId,
         });
         logger.info('dispatch accepted', {
           sessionKey: result.sessionKey,
