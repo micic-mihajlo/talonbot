@@ -7,6 +7,7 @@ export interface OutboundThreadMessage {
   channelId: string;
   threadId?: string;
   text: string;
+  idempotencyKey?: string;
 }
 
 export type OutboundThreadSender = (message: OutboundThreadMessage) => Promise<void>;
@@ -70,11 +71,11 @@ export class TaskUpdateNotifier {
     await this.reloadBindings();
 
     const maybeSubscribe = (this.tasks as unknown as {
-      onLifecycle?: (listener: (event: { taskId: string }) => void) => () => void;
+      onLifecycle?: (listener: (event: { taskId: string; at?: string }) => void) => () => void;
     }).onLifecycle;
     if (typeof maybeSubscribe === 'function') {
       this.unsubLifecycle = maybeSubscribe((event) => {
-        void this.publish(event.taskId, 'event');
+        void this.publish(event.taskId, 'event', event.at);
       });
     }
 
@@ -123,7 +124,7 @@ export class TaskUpdateNotifier {
     }
   }
 
-  private async publish(taskId: string, mode: 'event' | 'poll') {
+  private async publish(taskId: string, mode: 'event' | 'poll', lifecycleAt?: string) {
     if (this.inFlight.has(taskId)) {
       return;
     }
@@ -160,10 +161,17 @@ export class TaskUpdateNotifier {
 
       const report = this.tasks.buildTaskReport(task.id);
       const text = statusMessage(task, report);
+      const idempotencyKey = [
+        'task-update',
+        task.id,
+        task.status,
+        lifecycleAt || task.updatedAt || report?.generatedAt || new Date().toISOString(),
+      ].join(':');
       await sender({
         channelId: binding.channelId,
         threadId: binding.threadId,
         text,
+        idempotencyKey,
       });
 
       const at = new Date().toISOString();

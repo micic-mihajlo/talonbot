@@ -46,6 +46,23 @@ export class SlackTransport {
     });
   }
 
+  private async enqueueOutboundWithKey(
+    prefix: string,
+    message: { channelId: string; threadId?: string; text: string },
+    explicitKey?: string,
+  ) {
+    if (!this.outbox) {
+      throw new Error('slack_outbox_not_ready');
+    }
+
+    await this.outbox.enqueue({
+      idempotencyKey: explicitKey?.trim()
+        ? `${prefix}:${explicitKey.trim()}`
+        : this.outboxKey(prefix, message),
+      payload: message,
+    });
+  }
+
   private buildInboundMessage(message: any, threadTs: string | undefined, botUserId: string): InboundMessage {
     const attachments = (message.files || []).map((file: { id?: string; name?: string; mimetype?: string; url_private?: string }) => ({
       id: file.id ?? `${file.name}-${Date.now()}`,
@@ -114,11 +131,11 @@ export class SlackTransport {
     );
     await this.outbox.initialize();
     this.control.registerOutboundSender('slack', async (message) => {
-      await this.enqueueOutbound('notify', {
+      await this.enqueueOutboundWithKey('notify', {
         channelId: message.channelId,
         threadId: message.threadId,
         text: message.text,
-      });
+      }, message.idempotencyKey);
     });
 
     this.app.message(async (args: any) => {

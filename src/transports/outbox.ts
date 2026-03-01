@@ -37,6 +37,10 @@ export class TransportOutbox<TPayload> {
   private timer?: ReturnType<typeof setInterval>;
   private pumping = false;
   private closed = false;
+  private lastCleanupAt = 0;
+  private readonly cleanupIntervalMs = 60_000;
+  private readonly sentRetentionMs = 60 * 60 * 1000;
+  private readonly poisonRetentionMs = 24 * 60 * 60 * 1000;
 
   constructor(
     private readonly stateFile: string,
@@ -130,6 +134,10 @@ export class TransportOutbox<TPayload> {
     this.pumping = true;
     try {
       const now = Date.now();
+      if (now - this.lastCleanupAt >= this.cleanupIntervalMs) {
+        await this.cleanupCompletedRecords(now);
+        this.lastCleanupAt = now;
+      }
       const ready = this.list().filter((record) => {
         if (record.status !== 'queued' && record.status !== 'retrying') return false;
         const next = Date.parse(record.nextAttemptAt);
@@ -212,6 +220,34 @@ export class TransportOutbox<TPayload> {
       this.logger.warn('transport outbox persist failed', {
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async cleanupCompletedRecords(nowMs: number) {
+    let removed = 0;
+    for (const [id, record] of this.records.entries()) {
+      const updatedAtMs = Date.parse(record.updatedAt);
+      if (!Number.isFinite(updatedAtMs)) {
+        continue;
+      }
+
+      if (record.status === 'sent' && nowMs - updatedAtMs >= this.sentRetentionMs) {
+        this.records.delete(id);
+        this.byKey.delete(record.idempotencyKey);
+        removed += 1;
+        continue;
+      }
+
+      if (record.status === 'poison' && nowMs - updatedAtMs >= this.poisonRetentionMs) {
+        this.records.delete(id);
+        this.byKey.delete(record.idempotencyKey);
+        removed += 1;
+      }
+    }
+
+    if (removed > 0) {
+      await this.persistSafe();
+      this.logger.info('transport outbox retention cleanup removed records', { removed });
     }
   }
 }

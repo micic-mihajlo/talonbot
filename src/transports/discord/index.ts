@@ -71,6 +71,23 @@ export class DiscordTransport {
     });
   }
 
+  private async enqueueOutboundWithKey(
+    prefix: string,
+    message: { channelId: string; threadId?: string; text: string },
+    explicitKey?: string,
+  ) {
+    if (!this.outbox) {
+      throw new Error('discord_outbox_not_ready');
+    }
+
+    await this.outbox.enqueue({
+      idempotencyKey: explicitKey?.trim()
+        ? `${prefix}:${explicitKey.trim()}`
+        : this.outboxKey(prefix, message),
+      payload: message,
+    });
+  }
+
   async start() {
     if (!this.config.DISCORD_ENABLED) {
       logger.info('Discord transport disabled');
@@ -102,11 +119,11 @@ export class DiscordTransport {
     );
     await this.outbox.initialize();
     this.control.registerOutboundSender('discord', async (message) => {
-      await this.enqueueOutbound('notify', {
+      await this.enqueueOutboundWithKey('notify', {
         channelId: message.channelId,
         threadId: message.threadId,
         text: message.text,
-      });
+      }, message.idempotencyKey);
     });
 
     this.client.on('messageCreate', async (message) => {
