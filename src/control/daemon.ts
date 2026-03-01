@@ -21,11 +21,16 @@ import { buildEngine } from '../engine/index.js';
 import type { AppConfig } from '../config.js';
 import { isValidAlias, normalizeAlias, type AliasMap, type SessionAlias } from './aliases.js';
 import { createLogger } from '../utils/logger.js';
+import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
+import { TaskUpdateNotifier, type OutboundThreadMessage, type OutboundThreadSender } from './task-update-notifier.js';
+import type { TaskThreadBinding } from './store.js';
 
 export interface DispatchResult {
   accepted: boolean;
   reason?: string;
   sessionKey?: string;
+  mode?: 'task' | 'session';
+  taskId?: string;
 }
 
 interface SessionMetadata {
@@ -60,6 +65,10 @@ interface SessionLookup {
   session: AgentSession;
 }
 
+interface ControlPlaneOptions {
+  tasks?: TaskOrchestrator;
+}
+
 const STOP_COMMANDS = new Set(['!stop', '/stop', 'stop', '!shutdown', '/shutdown', 'shutdown']);
 const STATUS_COMMANDS = new Set(['!status', '/status', 'status']);
 const ALIAS_COMMANDS = new Set(['!alias', '/alias', 'alias']);
@@ -87,24 +96,45 @@ export class ControlPlane {
   private readonly sessions = new Map<string, SessionLookup>();
   private readonly sessionSockets = new Map<string, SessionSocketState>();
   private readonly turnEndSubscriptions = new Map<string, Set<TurnEndSubscription>>();
+  private readonly seenEventIds = new Map<string, number>();
+  private readonly outboundSenders = new Map<'slack' | 'discord' | 'socket', OutboundThreadSender>();
   private readonly store: SessionStore;
   private readonly controlSessionDir: string;
+  private readonly tasks?: TaskOrchestrator;
+  private readonly taskNotifier?: TaskUpdateNotifier;
   private aliases: AliasMap = {};
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly config: AppConfig, private readonly engineFactory = buildEngine) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly engineFactory = buildEngine,
+    options: ControlPlaneOptions = {},
+  ) {
     this.logger = createLogger('control.daemon', config.LOG_LEVEL as any);
     const expandedDataPath = config.DATA_DIR.replace('~', process.env.HOME || '');
     const expandedControlPath = config.CONTROL_SOCKET_PATH.replace('~', process.env.HOME || '');
     const controlDir = path.dirname(expandedControlPath);
     this.store = new SessionStore(path.join(expandedDataPath, 'sessions'));
     this.controlSessionDir = path.join(controlDir, 'session-control');
+    this.tasks = options.tasks;
+    if (this.tasks) {
+      this.taskNotifier = new TaskUpdateNotifier(
+        this.store,
+        this.tasks,
+        (source) => this.outboundSenders.get(source),
+        this.config.CHAT_TASK_UPDATE_POLL_MS,
+        this.logger,
+      );
+    }
   }
 
   async initialize() {
     await this.store.init();
     await this.loadAliases();
     await this.ensureControlDirectory();
+    if (this.taskNotifier) {
+      await this.taskNotifier.initialize();
+    }
     this.startCleanupTimer();
   }
 
@@ -112,12 +142,36 @@ export class ControlPlane {
     const route = routeFromMessage(message);
     const normalized = message.text.trim();
 
-    const command = this.parseCommand(normalized);
+    if (this.hasSeenEvent(message.id)) {
+      return {
+        accepted: true,
+        reason: 'duplicate',
+        sessionKey: route.sessionKey,
+      };
+    }
+    this.touchSeen(message.id);
+
+    const directive = this.parseDispatchDirective(normalized);
+    if (!directive.text.length) {
+      await callbacks.reply('Message text is required.');
+      return {
+        accepted: false,
+        reason: 'empty_message',
+        sessionKey: route.sessionKey,
+      };
+    }
+    const routedMessage = directive.text === normalized ? message : { ...message, text: directive.text };
+
+    const command = this.parseCommand(routedMessage.text);
     if (command) {
       return this.handleCommand(command, route, callbacks);
     }
 
-    return this.dispatchToSession(route.sessionKey, message, callbacks);
+    if (this.shouldDispatchTaskFlow(directive.modeOverride)) {
+      return this.dispatchToTask(route.sessionKey, routedMessage, callbacks);
+    }
+
+    return this.dispatchToSession(route.sessionKey, routedMessage, callbacks);
   }
 
   async dispatchToSession(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
@@ -142,6 +196,7 @@ export class ControlPlane {
       accepted: true,
       reason: 'enqueued',
       sessionKey: normalizedSessionKey,
+      mode: 'session',
     };
   }
 
@@ -722,6 +777,141 @@ export class ControlPlane {
     };
   }
 
+  private parseDispatchDirective(text: string): { modeOverride?: 'session' | 'task'; text: string } {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return { text: '' };
+    }
+
+    const sessionMatch = trimmed.match(/^(?:\/|!)?chat(?:\s+|:\s*)/i);
+    if (sessionMatch) {
+      return {
+        modeOverride: 'session',
+        text: trimmed.slice(sessionMatch[0].length).trim(),
+      };
+    }
+
+    const taskMatch = trimmed.match(/^(?:\/|!)?task(?:\s+|:\s*)/i);
+    if (taskMatch) {
+      return {
+        modeOverride: 'task',
+        text: trimmed.slice(taskMatch[0].length).trim(),
+      };
+    }
+
+    return { text: trimmed };
+  }
+
+  private shouldDispatchTaskFlow(modeOverride?: 'session' | 'task') {
+    if (!this.tasks) {
+      return false;
+    }
+
+    const effectiveMode = modeOverride || this.config.CHAT_DISPATCH_MODE;
+    if (effectiveMode === 'session') {
+      return false;
+    }
+
+    if (effectiveMode === 'hybrid') {
+      return modeOverride === 'task';
+    }
+
+    return true;
+  }
+
+  private async dispatchToTask(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
+    if (!this.tasks) {
+      return this.dispatchToSession(sessionKey, message, callbacks);
+    }
+
+    const text = message.text.trim();
+    if (!text.length) {
+      await callbacks.reply('Task text is required.');
+      return {
+        accepted: false,
+        reason: 'task_text_required',
+        sessionKey,
+      };
+    }
+
+    try {
+      const task = await this.tasks.submitTask({
+        text,
+        sessionKey,
+        source: 'transport',
+      });
+
+      await this.trackTaskBinding(task.id, sessionKey, message);
+      await callbacks.reply(
+        `Queued task ${task.id} (repo: ${task.repoId}). I will post progress and final artifacts in this thread.`,
+      );
+      return {
+        accepted: true,
+        reason: 'task_queued',
+        sessionKey,
+        mode: 'task',
+        taskId: task.id,
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (reason === 'repo_not_found') {
+        await callbacks.reply(
+          'No repository is registered yet. Register one first: `talonbot repos register --id <repo-id> --path /absolute/path --default true`.',
+        );
+        return {
+          accepted: false,
+          reason,
+          sessionKey,
+          mode: 'task',
+        };
+      }
+
+      await callbacks.reply(`Task dispatch failed: ${reason}`);
+      return {
+        accepted: false,
+        reason,
+        sessionKey,
+        mode: 'task',
+      };
+    }
+  }
+
+  private async trackTaskBinding(taskId: string, sessionKey: string, message: InboundMessage) {
+    if (!this.taskNotifier) {
+      return;
+    }
+
+    const binding: TaskThreadBinding = {
+      taskId,
+      source: message.source,
+      channelId: message.sourceChannelId,
+      threadId: message.sourceThreadId || undefined,
+      sessionKey,
+      createdAt: new Date().toISOString(),
+    };
+    await this.taskNotifier.track(binding);
+  }
+
+  registerOutboundSender(source: 'slack' | 'discord' | 'socket', sender: OutboundThreadSender) {
+    this.outboundSenders.set(source, sender);
+  }
+
+  unregisterOutboundSender(source: 'slack' | 'discord' | 'socket') {
+    this.outboundSenders.delete(source);
+  }
+
+  async sendOutboundThreadMessage(source: 'slack' | 'discord' | 'socket', message: OutboundThreadMessage) {
+    const sender = this.outboundSenders.get(source);
+    if (!sender) {
+      throw new Error(`outbound_sender_not_registered:${source}`);
+    }
+    await sender(message);
+  }
+
+  listTaskBindings() {
+    return this.taskNotifier?.listBindings() || [];
+  }
+
   private buildRunnerCallbacks(callbacks: RunnerContext): RunnerCallbacks {
     return {
       reply: callbacks.reply,
@@ -1124,9 +1314,29 @@ export class ControlPlane {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
     }
+    void this.taskNotifier?.stop();
 
     for (const sessionKey of Array.from(this.sessions.keys())) {
       this.stopSession(sessionKey).catch(() => undefined);
+    }
+  }
+
+  private hasSeenEvent(eventId: string) {
+    const seenAt = this.seenEventIds.get(eventId);
+    if (!seenAt) {
+      return false;
+    }
+    return Date.now() - seenAt <= this.config.SESSION_DEDUPE_WINDOW_MS;
+  }
+
+  private touchSeen(eventId: string) {
+    const now = Date.now();
+    this.seenEventIds.set(eventId, now);
+    const cutoff = now - this.config.SESSION_DEDUPE_WINDOW_MS;
+    for (const [id, seenAt] of this.seenEventIds.entries()) {
+      if (seenAt < cutoff) {
+        this.seenEventIds.delete(id);
+      }
     }
   }
 }

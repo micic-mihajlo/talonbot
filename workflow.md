@@ -5,8 +5,14 @@
 1. register target repos
 2. submit tasks to orchestrator
 3. let workers execute in isolated worktrees
-4. inspect artifacts (summary/commit/PR/checks)
-5. retry or escalate blocked tasks
+4. stream lifecycle updates in-thread (queued/running/blocked/terminal)
+5. inspect artifacts (summary/commit/PR/checks)
+6. retry or escalate blocked tasks
+
+Chat behavior defaults:
+- `CHAT_DISPATCH_MODE=task`: non-command messages become tasks.
+- `chat:` or `/chat` forces conversational session execution.
+- `CHAT_REQUIRE_VERIFIED_PR=true`: task cannot reach `done` without verified PR URL.
 
 ## Fan-out / fan-in
 
@@ -45,4 +51,5 @@ For local parity, run `npm run ci:p0`.
 1. prune sessions and logs: `npm run cli -- prune`
 2. run audit: `npm run cli -- audit --deep`
 3. inspect bridge poison queue: `GET /bridge/status`
-4. inspect failed tasks and escalate owners
+4. inspect transport outbox poison records in diagnostics bundle
+5. inspect failed/blocked tasks and escalate owners

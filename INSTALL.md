@@ -88,6 +88,8 @@ talonbot env set ENGINE_ARGS "-p --no-session --no-extensions --no-skills --no-p
 talonbot env set PI_SKIP_VERSION_CHECK 1
 talonbot env set ENGINE_CWD "/var/lib/talonbot/engine"
 talonbot env set CONTROL_HTTP_PORT 8080
+talonbot env set CHAT_DISPATCH_MODE task
+talonbot env set CHAT_REQUIRE_VERIFIED_PR true
 ```
 
 6. Complete `pi` auth once as the service user, then restart:
@@ -105,6 +107,19 @@ talonbot operator
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/health | jq
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/workers | jq
 npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"
+```
+
+8. Register at least one repository before enabling strict task-first chat:
+
+```bash
+talonbot repos register --id my-repo --path /absolute/path/to/repo --default true
+```
+
+9. Optional operator recovery checks:
+
+```bash
+curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/status | jq
+curl -s -X POST -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/diagnostics/bundle | jq
 ```
 
 ## Troubleshooting

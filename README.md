@@ -65,6 +65,7 @@ cp systemd/talonbot.env.template .env
 # edit .env:
 # DISCORD_ENABLED=true
 # DISCORD_TOKEN=your-discord-bot-token
+# CHAT_DISPATCH_MODE=task
 # CONTROL_AUTH_TOKEN=choose-a-long-random-string
 ./install.sh --start
 ```
@@ -87,6 +88,14 @@ curl -s -H "Content-Type: application/json" -d '{"source":"discord","channelId":
 ```
 
 You should get an accepted response from `/dispatch` and a reply text in logs/JSON.
+
+When `CHAT_DISPATCH_MODE=task` (default), non-command Discord/Slack messages queue orchestration tasks and stream task lifecycle updates back to the same thread. Use `chat: ...` (or `/chat ...`) to force plain conversational session mode for a single message.
+
+Strict mode defaults:
+
+- chat-sourced tasks require verified PR evidence before reaching `done` (`CHAT_REQUIRE_VERIFIED_PR=true`)
+- running/blocked/terminal task updates are posted through transport outboxes with retry/backoff
+- notifier bindings survive restart and resume lifecycle updates for in-flight tasks
 
 Run health/config sanity checks locally with:
 
@@ -166,6 +175,12 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 
 `/status` includes orchestration health diagnostics (orphaned workers, stuck tasks, stale worktrees).
 `/tasks` and `/tasks/:id` include artifact-gated progress reports, and `/tasks/:id/report` returns report-only output.
+
+`/diagnostics/bundle` now includes:
+
+- task binding recovery state
+- startup reconciliation snapshot
+- transport outbox states (`.discord` / `.slack`)
 
 Example:
 

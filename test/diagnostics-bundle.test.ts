@@ -23,6 +23,7 @@ describe('diagnostics bundle', () => {
       config: defaultConfig,
       control: {
         listSessions: () => [{ sessionKey: 'discord:ops:main' }],
+        listTaskBindings: () => [],
       } as any,
       tasks: {
         listTasks: () => [{ id: 'task-1', status: 'running' }],
@@ -58,6 +59,9 @@ describe('diagnostics bundle', () => {
 
     expect(bundle.files).toContain('workers.json');
     expect(bundle.files).toContain('orchestration-health.json');
+    expect(bundle.files).toContain('task-bindings.json');
+    expect(bundle.files).toContain('transport-outbox.discord.json');
+    expect(bundle.files).toContain('transport-outbox.slack.json');
 
     const workers = JSON.parse(await readFile(path.join(bundle.bundleDir, 'workers.json'), 'utf8')) as { runtime: string };
     expect(workers.runtime).toBe('tmux');

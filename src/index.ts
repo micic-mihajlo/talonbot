@@ -57,12 +57,35 @@ const run = async () => {
     throw new StartupValidationError(startupIssues);
   }
 
-  const control = new ControlPlane(config);
-  await control.initialize();
-  const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
-
   const taskOrchestrator = new TaskOrchestrator(config);
   await taskOrchestrator.initialize();
+  const startupReconciliation: {
+    at: string;
+    orchestrationHealth?: unknown;
+    workerCleanup?: unknown;
+    errors: string[];
+  } = {
+    at: new Date().toISOString(),
+    errors: [],
+  };
+
+  try {
+    startupReconciliation.orchestrationHealth = await taskOrchestrator.getHealthStatus(true);
+  } catch (error) {
+    startupReconciliation.errors.push(`health_scan_failed:${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    startupReconciliation.workerCleanup = await taskOrchestrator.cleanupOrphanedWorkers();
+  } catch (error) {
+    startupReconciliation.errors.push(`worker_cleanup_failed:${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const control = new ControlPlane(config, undefined, {
+    tasks: taskOrchestrator,
+  });
+  await control.initialize();
+  const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
 
   const sentry = config.SENTRY_ENABLED
     ? new SentryAgent({
@@ -143,6 +166,7 @@ const run = async () => {
         release: releaseManager,
         sentry: sentry || undefined,
         diagnosticsOutputDir: path.join(config.DATA_DIR.replace('~', process.env.HOME || ''), 'diagnostics'),
+        startupReconciliation,
       },
     );
     runtimeHandles.push({
