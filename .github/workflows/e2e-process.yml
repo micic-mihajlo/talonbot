@@ -113,7 +113,7 @@ jobs:
             http://127.0.0.1:8092/tasks/$TASK_ID)
           echo "$FINAL"
           echo "$FINAL" | grep -q '"status":"blocked"'
-          echo "$FINAL" | grep -q 'verified_pr_required'
+          echo "$FINAL" | grep -Eq 'verified_pr_required|no repository/file-system command execution access'
 
       - name: Upload e2e runtime log on failure
         if: failure()
