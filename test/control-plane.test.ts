@@ -284,6 +284,52 @@ describe('control plane rpc behavior', () => {
   });
 });
 
+describe('control plane task-intent triage behavior', () => {
+  let workingDirectory = '';
+  let controlPlane: ControlPlane;
+
+  beforeEach(async () => {
+    workingDirectory = await createWorkingDirectory();
+    const tasksStub = {
+      listTasks: () => [],
+      getTask: () => null,
+      buildTaskReport: () => null,
+      onLifecycle: () => () => {},
+      submitTask: async () => {
+        throw new Error('submitTask should not be called for unknown conversational prompts');
+      },
+    };
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task',
+      },
+      () => createEngine(),
+      { tasks: tasksStub as any },
+    );
+    await controlPlane.initialize();
+  });
+
+  afterEach(async () => {
+    await controlPlane?.stop();
+    await rm(workingDirectory, { recursive: true, force: true });
+  });
+
+  it('routes unknown conversational prompts to session mode when no explicit task cues exist', async () => {
+    const replies: string[] = [];
+    const result = await controlPlane.dispatch(mkInboundMessage('how do u feel about this?'), {
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.mode).toBe('session');
+    await waitFor(() => replies.length > 0);
+    expect(replies[0]).toContain('engine:');
+  });
+});
+
 describe('control plane task-first dispatch', () => {
   let workingDirectory = '';
   let controlPlane: ControlPlane;

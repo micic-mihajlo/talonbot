@@ -823,16 +823,31 @@ export class TaskOrchestrator {
         );
       }
 
+      const policy = this.getTaskCompletionPolicy(task);
+      const summaryOnlyPolicy = !policy.requiresVerifiedPr && policy.requiredArtifacts.every((artifact) => artifact === 'summary');
+
       if (parsed.state === 'blocked') {
-        task.error = parsed.summary;
-        this.transitionTask(task, {
-          to: 'blocked',
-          kind: 'blocked',
-          message: parsed.summary,
-        });
-        await this.persist();
-        this.updateParentState(task);
-        return;
+        if (summaryOnlyPolicy && parsed.summary.trim()) {
+          task.events.push({
+            at: new Date().toISOString(),
+            kind: 'summary_fallback',
+            message: 'Worker returned blocked state but summary-only policy allows completion fallback.',
+            details: toEventDetails({
+              intent: policy.taskIntent,
+              requiredArtifacts: policy.requiredArtifacts,
+            }),
+          });
+        } else {
+          task.error = parsed.summary;
+          this.transitionTask(task, {
+            to: 'blocked',
+            kind: 'blocked',
+            message: parsed.summary,
+          });
+          await this.persist();
+          this.updateParentState(task);
+          return;
+        }
       }
 
       if (this.config.TASK_AUTO_COMMIT) {
@@ -913,8 +928,6 @@ export class TaskOrchestrator {
         }
       }
 
-      const policy = this.getTaskCompletionPolicy(task);
-
       if (policy.requiresVerifiedPr) {
         let prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const expectedHeadRefName = task.branch || this.latestArtifact(task, 'launcher')?.branch;
@@ -974,16 +987,6 @@ export class TaskOrchestrator {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const missing = missingRequiredArtifacts.join(', ');
         task.error = `blocked: required_artifacts_missing - ${missing}`;
-        this.appendArtifact(
-          task,
-          {
-            kind: 'error',
-            at: new Date().toISOString(),
-            summary: `Task blocked pending required artifacts: ${missing}.`,
-            prUrl,
-          },
-          false,
-        );
         this.transitionTask(task, {
           to: 'blocked',
           kind: 'blocked',
@@ -995,6 +998,16 @@ export class TaskOrchestrator {
             prUrl: prUrl || '',
           },
         });
+        this.appendArtifact(
+          task,
+          {
+            kind: 'error',
+            at: new Date().toISOString(),
+            summary: `Task blocked pending required artifacts: ${missing}.`,
+            prUrl,
+          },
+          false,
+        );
         await this.persist();
         this.updateParentState(task);
         return;

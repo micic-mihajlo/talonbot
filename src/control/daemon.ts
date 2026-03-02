@@ -126,6 +126,30 @@ const TASK_INTENT_TOKEN_SETS: ReadonlyArray<{
   },
 ];
 
+const EXPLICIT_TASK_CUE_TOKENS = new Set([
+  'task',
+  'implement',
+  'implementation',
+  'fix',
+  'patch',
+  'add',
+  'create',
+  'update',
+  'change',
+  'refactor',
+  'commit',
+  'branch',
+  'push',
+  'pr',
+  'pull',
+  'request',
+  'worktree',
+  'repo',
+  'repository',
+  'deploy',
+  'rollback',
+]);
+
 interface TaskPolicyHintInput {
   taskIntent?: TaskIntent;
   requiresVerifiedPr?: boolean;
@@ -191,6 +215,11 @@ const inferTaskIntent = (text: string): TaskIntent => {
     }
   }
   return 'unknown';
+};
+
+const hasExplicitTaskCue = (text: string): boolean => {
+  const tokens = text.toLowerCase().match(/[a-z0-9_-]+/g) || [];
+  return tokens.some((token) => EXPLICIT_TASK_CUE_TOKENS.has(token));
 };
 
 const normalizePolicyMetadata = (metadata: Record<string, string> | undefined): TaskPolicyHintInput => {
@@ -339,7 +368,7 @@ export class ControlPlane {
       return this.handleCommand(command, route, callbacks);
     }
 
-    if (this.shouldDispatchTaskFlow(directive.modeOverride)) {
+    if (this.shouldDispatchTaskFlow(directive.modeOverride, routedMessage, taskPolicyHint)) {
       return this.dispatchToTask(route.sessionKey, routedMessage, callbacks, taskPolicyHint);
     }
 
@@ -974,7 +1003,11 @@ export class ControlPlane {
     return { text: trimmed };
   }
 
-  private shouldDispatchTaskFlow(modeOverride?: 'session' | 'task') {
+  private shouldDispatchTaskFlow(
+    modeOverride: 'session' | 'task' | undefined,
+    message: InboundMessage,
+    taskPolicyHint?: TaskPolicyHintInput,
+  ) {
     if (!this.tasks) {
       return false;
     }
@@ -984,8 +1017,22 @@ export class ControlPlane {
       return false;
     }
 
+    if (modeOverride === 'task') {
+      return true;
+    }
+
     if (effectiveMode === 'hybrid') {
-      return modeOverride === 'task';
+      return false;
+    }
+
+    const policy = resolveTaskPolicy({
+      text: message.text,
+      messageMetadata: message.metadata,
+      taskPolicyHint,
+      defaultVerifiedPr: this.config.CHAT_REQUIRE_VERIFIED_PR,
+    });
+    if (policy.taskIntent === 'unknown' && !hasExplicitTaskCue(message.text)) {
+      return false;
     }
 
     return true;
