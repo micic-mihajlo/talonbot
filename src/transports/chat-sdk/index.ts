@@ -15,7 +15,7 @@ import { parseThreadIdentity, toAdapterThreadId, toInboundMessage, type ChatSdkS
 
 const logger = createLogger('transports.chat-sdk', 'info');
 
-type OutboundPayload = { channelId: string; threadId?: string; text: string };
+type OutboundPayload = { channelId: string; threadId?: string; guildId?: string; text: string };
 
 export class ChatSdkTransport implements ChatTransport {
   private chat?: Chat<Record<string, Adapter>>;
@@ -82,6 +82,7 @@ export class ChatSdkTransport implements ChatTransport {
           await this.enqueueOutbound(message.source, {
             channelId: message.sourceChannelId,
             threadId: thread.threadId,
+            guildId: thread.guildId,
             text,
           });
         },
@@ -105,7 +106,7 @@ export class ChatSdkTransport implements ChatTransport {
       source: 'discord',
       channelId: payload.channelId,
       threadId: payload.threadId,
-      guildId: '@me',
+      guildId: payload.guildId || '@me',
     };
     await this.discordAdapter.postMessage(toAdapterThreadId(identity), payload.text);
   }
@@ -116,7 +117,7 @@ export class ChatSdkTransport implements ChatTransport {
       await this.slackOutbox.enqueue({
         idempotencyKey:
           explicitKey?.trim() ||
-          `chat-sdk:slack:${payload.channelId}:${payload.threadId || 'main'}:${Date.now()}:${payload.text}`,
+          `chat-sdk:slack:${payload.channelId}:${payload.threadId || 'main'}:${payload.guildId || 'na'}:${Date.now()}:${payload.text}`,
         payload,
       });
       return;
@@ -125,7 +126,7 @@ export class ChatSdkTransport implements ChatTransport {
     await this.discordOutbox.enqueue({
       idempotencyKey:
         explicitKey?.trim() ||
-        `chat-sdk:discord:${payload.channelId}:${payload.threadId || 'main'}:${Date.now()}:${payload.text}`,
+        `chat-sdk:discord:${payload.channelId}:${payload.threadId || 'main'}:${payload.guildId || 'na'}:${Date.now()}:${payload.text}`,
       payload,
     });
   }
@@ -262,29 +263,33 @@ export class ChatSdkTransport implements ChatTransport {
       await this.dispatchInbound(inbound, parseThreadIdentity(source, thread.id));
     });
 
-    this.slackOutbox = new TransportOutbox(
-      `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.chat-sdk.slack`,
-      async (payload) => {
-        await this.sendSlack(payload);
-      },
-      this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
-      this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
-      this.config.TRANSPORT_OUTBOX_MAX_RETRIES,
-      logger,
-    );
-    await this.slackOutbox.initialize();
+    if (this.config.SLACK_ENABLED) {
+      this.slackOutbox = new TransportOutbox(
+        `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.chat-sdk.slack`,
+        async (payload) => {
+          await this.sendSlack(payload);
+        },
+        this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
+        this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
+        this.config.TRANSPORT_OUTBOX_MAX_RETRIES,
+        logger,
+      );
+      await this.slackOutbox.initialize();
+    }
 
-    this.discordOutbox = new TransportOutbox(
-      `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.chat-sdk.discord`,
-      async (payload) => {
-        await this.sendDiscord(payload);
-      },
-      this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
-      this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
-      this.config.TRANSPORT_OUTBOX_MAX_RETRIES,
-      logger,
-    );
-    await this.discordOutbox.initialize();
+    if (this.config.DISCORD_ENABLED) {
+      this.discordOutbox = new TransportOutbox(
+        `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.chat-sdk.discord`,
+        async (payload) => {
+          await this.sendDiscord(payload);
+        },
+        this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
+        this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
+        this.config.TRANSPORT_OUTBOX_MAX_RETRIES,
+        logger,
+      );
+      await this.discordOutbox.initialize();
+    }
 
     if (this.options.registerOutboundSenders) {
       if (this.config.SLACK_ENABLED) {
@@ -301,6 +306,7 @@ export class ChatSdkTransport implements ChatTransport {
           await this.enqueueOutbound('discord', {
             channelId: message.channelId,
             threadId: message.threadId,
+            guildId: undefined,
             text: message.text,
           }, message.idempotencyKey);
         });
