@@ -140,15 +140,16 @@ const EXPLICIT_TASK_CUE_TOKENS = new Set([
   'commit',
   'branch',
   'push',
-  'pr',
-  'pull',
-  'request',
   'worktree',
-  'repo',
-  'repository',
   'deploy',
   'rollback',
 ]);
+
+const EXPLICIT_TASK_CUE_PHRASES: ReadonlyArray<RegExp> = [
+  /\b(?:open|create|make|submit|raise)\s+(?:a\s+)?(?:pr|pull request)\b/i,
+  /\b(?:create|make)\s+(?:a\s+)?branch\b/i,
+  /\b(?:commit|push)\b/i,
+];
 
 interface TaskPolicyHintInput {
   taskIntent?: TaskIntent;
@@ -219,7 +220,10 @@ const inferTaskIntent = (text: string): TaskIntent => {
 
 const hasExplicitTaskCue = (text: string): boolean => {
   const tokens = text.toLowerCase().match(/[a-z0-9_-]+/g) || [];
-  return tokens.some((token) => EXPLICIT_TASK_CUE_TOKENS.has(token));
+  if (tokens.some((token) => EXPLICIT_TASK_CUE_TOKENS.has(token))) {
+    return true;
+  }
+  return EXPLICIT_TASK_CUE_PHRASES.some((pattern) => pattern.test(text));
 };
 
 const normalizePolicyMetadata = (metadata: Record<string, string> | undefined): TaskPolicyHintInput => {
