@@ -78,6 +78,10 @@ curl -s http://localhost:8080/sessions
 
 You should see active sessions appear once messages are received.
 
+## Testing note
+
+- This repository includes automated and smoke tests to validate runtime behavior.
+
 ## Quick smoke checks
 
 ```bash
