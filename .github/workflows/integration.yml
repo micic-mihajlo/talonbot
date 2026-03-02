@@ -101,5 +101,8 @@ jobs:
           ENGINE_MODE=mock \
           CONTROL_HTTP_PORT=8090 \
           CONTROL_AUTH_TOKEN=integration-control-token-abcdefghijklmnopqrstuvwxyz \
+          STARTUP_INTEGRITY_MODE=warn \
+          CHAT_DISPATCH_MODE=session \
+          RUNTIME_EXPECTED_USER=${USER} \
           DISCORD_ENABLED=false \
           npm run doctor -- --runtime-url http://127.0.0.1:8090 --runtime-token integration-control-token-abcdefghijklmnopqrstuvwxyz

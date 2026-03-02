@@ -95,10 +95,17 @@ for file in "${state_files[@]}"; do
   mode="$(stat -c '%a' "$file" 2>/dev/null || true)"
   owner="$(stat -c '%U' "$file" 2>/dev/null || true)"
 
-  if [ -n "$mode" ] && [ "$mode" -gt 640 ]; then
-    warn "state file has broad permissions ($file mode=$mode)"
+  if [ -n "$mode" ]; then
+    mode_bits=$((8#$mode))
+    other_bits=$((mode_bits & 7))
+    group_write=$((mode_bits & 16))
+    if [ "$other_bits" -gt 0 ] || [ "$group_write" -gt 0 ]; then
+      warn "state file has broad permissions ($file mode=$mode)"
+    else
+      pass "state file permissions look safe ($file mode=${mode:-unknown})"
+    fi
   else
-    pass "state file permissions look safe ($file mode=${mode:-unknown})"
+    warn "unable to determine permissions for state file ($file)"
   fi
 
   if [ -n "$owner" ] && [ "$owner" != "$runtime_user" ]; then
