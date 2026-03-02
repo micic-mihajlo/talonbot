@@ -88,4 +88,57 @@ describe('transport outbox', () => {
     expect(outbox.list().length).toBe(1);
     await outbox.stop();
   });
+
+  it('replaces a poison record when the same idempotency key is retried', async () => {
+    sandbox = await mkdtemp(path.join(tmpdir(), 'talon-outbox-'));
+
+    let attempts = 0;
+    const outbox = new TransportOutbox<{ text: string }>(
+      path.join(sandbox, 'outbox.json'),
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('first send failure');
+        }
+      },
+      50,
+      100,
+      0,
+      {
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
+    );
+
+    await outbox.initialize();
+    await outbox.enqueue({
+      idempotencyKey: 'same-key',
+      payload: { text: 'hello' },
+    });
+
+    await waitFor(
+      () =>
+        outbox.list().some((record) => record.idempotencyKey === 'same-key' && record.status === 'poison'),
+      4000,
+    );
+
+    const first = outbox.list().filter((record) => record.idempotencyKey === 'same-key');
+    expect(first).toHaveLength(1);
+
+    await outbox.enqueue({
+      idempotencyKey: 'same-key',
+      payload: { text: 'hello' },
+    });
+
+    await waitFor(
+      () =>
+        outbox.list().some((record) => record.idempotencyKey === 'same-key' && record.status === 'sent'),
+      4000,
+    );
+    const second = outbox.list().filter((record) => record.idempotencyKey === 'same-key');
+    expect(second).toHaveLength(1);
+    expect(attempts).toBe(2);
+    await outbox.stop();
+  });
 });
