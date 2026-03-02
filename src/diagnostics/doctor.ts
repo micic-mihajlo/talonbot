@@ -81,6 +81,10 @@ const checkTooling = async (issues: StartupIssue[]) => {
     return;
   }
 
+  if (process.env.CI === 'true' || process.env.CI === '1') {
+    return;
+  }
+
   try {
     await execFileAsync('gh', ['auth', 'status'], { timeout: 15000, windowsHide: true, maxBuffer: 256 * 1024, encoding: 'utf8' });
   } catch {
