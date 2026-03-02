@@ -914,11 +914,32 @@ export class TaskOrchestrator {
       }
 
       const policy = this.getTaskCompletionPolicy(task);
-      const missingRequiredArtifacts = this.getMissingRequiredArtifacts(task, policy.requiredArtifacts);
 
       if (policy.requiresVerifiedPr) {
-        const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+        let prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const expectedHeadRefName = task.branch || this.latestArtifact(task, 'launcher')?.branch;
+        if (!prUrl && repo && launched.path) {
+          const discovered = await this.github
+            .findPullRequestByBranch(launched.path, {
+              expectedHeadRefName,
+              taskId: task.id,
+            })
+            .catch(() => null);
+          if (discovered?.url) {
+            this.appendArtifact(
+              task,
+              {
+                kind: 'pull_request',
+                at: new Date().toISOString(),
+                prUrl: discovered.url,
+                branch: discovered.headRefName,
+                summary: 'Discovered pull request from repository branch metadata.',
+              },
+              false,
+            );
+            prUrl = discovered.url;
+          }
+        }
         const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl, 10000, expectedHeadRefName) : false;
         if (!verified) {
           task.error = 'blocked: verified_pr_required';
@@ -948,6 +969,7 @@ export class TaskOrchestrator {
         }
       }
 
+      const missingRequiredArtifacts = this.getMissingRequiredArtifacts(task, policy.requiredArtifacts);
       if (missingRequiredArtifacts.length > 0) {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const missing = missingRequiredArtifacts.join(', ');

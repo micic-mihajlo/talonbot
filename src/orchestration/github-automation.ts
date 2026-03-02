@@ -11,6 +11,7 @@ interface PullRequestCheckRecord {
 
 interface PullRequestView {
   url?: string;
+  headRefName?: string;
   statusCheckRollup?: PullRequestCheckRecord[];
 }
 
@@ -21,6 +22,44 @@ export interface PullRequestCheckState {
   total: number;
   failed: string[];
 }
+
+export interface PullRequestMatch {
+  url: string;
+  headRefName: string;
+}
+
+const extractTaskToken = (value: string) => {
+  const match = value.match(/task-\d+-[a-f0-9]+/i);
+  return match?.[0]?.toLowerCase() || '';
+};
+
+const headRefMatches = (actual: string, expected: string, taskId?: string) => {
+  const normalizedActual = actual.trim();
+  const normalizedExpected = expected.trim();
+  if (!normalizedActual) {
+    return false;
+  }
+
+  if (normalizedExpected) {
+    if (normalizedActual === normalizedExpected) {
+      return true;
+    }
+    if (normalizedActual.startsWith(`${normalizedExpected}-`)) {
+      return true;
+    }
+
+    const expectedToken = extractTaskToken(normalizedExpected);
+    if (expectedToken && normalizedActual.toLowerCase().includes(expectedToken)) {
+      return true;
+    }
+  }
+
+  if (taskId && normalizedActual.toLowerCase().includes(taskId.toLowerCase())) {
+    return true;
+  }
+
+  return false;
+};
 
 export class GitHubAutomation {
   async listChangedFiles(worktreePath: string): Promise<string[]> {
@@ -109,6 +148,27 @@ export class GitHubAutomation {
       pending: true,
       summary: latest.summary ? `${latest.summary}, timeout` : 'timeout waiting for checks',
     };
+  }
+
+  async findPullRequestByBranch(
+    worktreePath: string,
+    options: {
+      expectedHeadRefName?: string;
+      taskId?: string;
+      limit?: number;
+    },
+  ): Promise<PullRequestMatch | null> {
+    const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(500, options.limit || 200)) : 200;
+    const out = await this.gh(worktreePath, ['pr', 'list', '--state', 'all', '--limit', String(limit), '--json', 'url,headRefName']);
+    const parsed = JSON.parse(out.stdout || '[]') as Array<PullRequestView>;
+    for (const candidate of parsed) {
+      const url = typeof candidate.url === 'string' ? candidate.url.trim() : '';
+      const headRefName = typeof candidate.headRefName === 'string' ? candidate.headRefName.trim() : '';
+      if (!url || !headRefName) continue;
+      if (!headRefMatches(headRefName, options.expectedHeadRefName || '', options.taskId)) continue;
+      return { url, headRefName };
+    }
+    return null;
   }
 
   parsePullRequestChecks(raw: string): PullRequestCheckState {
