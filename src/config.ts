@@ -42,6 +42,11 @@ const schemaBase = z.object({
   CHAT_DISPATCH_MODE: z.enum(['session', 'hybrid', 'task']).default('task'),
   CHAT_REQUIRE_VERIFIED_PR: bool.default(true),
   CHAT_TASK_UPDATE_POLL_MS: z.coerce.number().int().min(500).max(60 * 60 * 1000).default(4000),
+  CHAT_TRANSPORT_PROVIDER: z.enum(['legacy', 'chat_sdk', 'dual']).default('legacy'),
+  CHAT_SDK_REDIS_URL: z.string().default(''),
+  CHAT_SDK_SHADOW_TRAFFIC: bool.default(true),
+  CHAT_SDK_EVENT_DEDUPE_WINDOW_MS: z.coerce.number().int().min(100).max(10 * 60 * 1000).default(30000),
+  CHAT_SDK_DISABLE_LEGACY_OUTBOUND: bool.default(false),
 
   ENGINE_MODE: z.enum(['process', 'mock', 'session']).default('process'),
   ENGINE_COMMAND: z.string().default('pi'),
@@ -99,6 +104,8 @@ const schemaBase = z.object({
 
   DISCORD_ENABLED: bool.default(false),
   DISCORD_TOKEN: z.string().default(''),
+  DISCORD_APPLICATION_ID: z.string().default(''),
+  DISCORD_PUBLIC_KEY: z.string().default(''),
   DISCORD_TYPING_ENABLED: bool.default(true),
   DISCORD_REACTIONS_ENABLED: bool.default(true),
   DISCORD_ALLOWED_CHANNELS: z.string().default(''),
@@ -148,6 +155,29 @@ export const appConfigSchema = schemaBase.superRefine((input, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['DISCORD_ENABLED'],
       message: 'DISCORD_ENABLED=true requires DISCORD_TOKEN.',
+    });
+  }
+
+  if (
+    input.DISCORD_ENABLED &&
+    (input.CHAT_TRANSPORT_PROVIDER === 'chat_sdk' || input.CHAT_TRANSPORT_PROVIDER === 'dual') &&
+    (!input.DISCORD_APPLICATION_ID.trim() || !input.DISCORD_PUBLIC_KEY.trim())
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['DISCORD_APPLICATION_ID'],
+      message: 'chat-sdk Discord mode requires DISCORD_APPLICATION_ID and DISCORD_PUBLIC_KEY.',
+    });
+  }
+
+  if (
+    (input.CHAT_TRANSPORT_PROVIDER === 'chat_sdk' || input.CHAT_TRANSPORT_PROVIDER === 'dual') &&
+    !input.CHAT_SDK_REDIS_URL.trim()
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['CHAT_SDK_REDIS_URL'],
+      message: 'CHAT_TRANSPORT_PROVIDER=chat_sdk|dual requires CHAT_SDK_REDIS_URL.',
     });
   }
 });

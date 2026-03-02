@@ -50,4 +50,10 @@ describe('config schema', () => {
       /TASK_AUTO_COMMIT/,
     );
   });
+
+  it('fails when chat-sdk provider is enabled without Redis URL', () => {
+    expect(() => parseAppConfig({ CHAT_TRANSPORT_PROVIDER: 'chat_sdk' } as NodeJS.ProcessEnv, {})).toThrow(
+      /CHAT_SDK_REDIS_URL/,
+    );
+  });
 });

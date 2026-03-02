@@ -13,12 +13,15 @@ import type { SentryAgent } from '../orchestration/sentry-agent.js';
 import { runSecurityAudit } from '../security/audit.js';
 import { createDiagnosticsBundle } from '../diagnostics/bundle.js';
 import { ensureDir } from '../utils/path.js';
+import type { ChatSdkTransport } from '../transports/chat-sdk/index.js';
 
 export interface RuntimeServices {
   tasks?: TaskOrchestrator;
   bridge?: BridgeSupervisor;
   release?: ReleaseManager;
   sentry?: SentryAgent;
+  chatSdkTransport?: ChatSdkTransport;
+  transportStatus?: () => unknown;
   diagnosticsOutputDir?: string;
   startupReconciliation?: unknown;
 }
@@ -67,6 +70,23 @@ const readJsonBody = (req: http.IncomingMessage): Promise<unknown> => {
     });
   });
 };
+
+const readRawBody = (req: http.IncomingMessage): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let length = 0;
+    req.on('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buffer);
+      length += buffer.length;
+      if (length > 2_000_000) {
+        reject(new Error('payload_too_large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 
 const randomId = () => `http-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
@@ -157,6 +177,44 @@ export const createHttpServer = (
     const url = new URL(req.url || '/', `http://127.0.0.1:${port || 80}`);
     const pathname = url.pathname;
 
+    if (pathname === '/chat-sdk/webhooks/slack' && req.method === 'POST') {
+      if (!services?.chatSdkTransport) {
+        writeJson(res, 501, { error: 'chat_sdk_transport_not_configured' });
+        return;
+      }
+      try {
+        const raw = await readRawBody(req);
+        const response = await services.chatSdkTransport.handleWebhook('slack', req.method, req.headers, raw);
+        Object.entries(response.headers).forEach(([key, value]) => {
+          res.setHeader(key, value);
+        });
+        res.statusCode = response.status;
+        res.end(response.body);
+      } catch (error) {
+        writeJson(res, 400, { error: (error as Error).message });
+      }
+      return;
+    }
+
+    if (pathname === '/chat-sdk/webhooks/discord' && req.method === 'POST') {
+      if (!services?.chatSdkTransport) {
+        writeJson(res, 501, { error: 'chat_sdk_transport_not_configured' });
+        return;
+      }
+      try {
+        const raw = await readRawBody(req);
+        const response = await services.chatSdkTransport.handleWebhook('discord', req.method, req.headers, raw);
+        Object.entries(response.headers).forEach(([key, value]) => {
+          res.setHeader(key, value);
+        });
+        res.statusCode = response.status;
+        res.end(response.body);
+      } catch (error) {
+        writeJson(res, 400, { error: (error as Error).message });
+      }
+      return;
+    }
+
     if (pathname === '/health' && req.method === 'GET') {
       const releaseStatus = services?.release ? await services.release.status().catch(() => null) : null;
       const tasks = services?.tasks?.listTasks() || [];
@@ -188,6 +246,7 @@ export const createHttpServer = (
             : null,
           bridge: services?.bridge ? { enabled: true } : { enabled: false },
           sentry: services?.sentry ? services.sentry.getStatus() : null,
+          transports: services?.transportStatus ? services.transportStatus() : null,
         },
       };
       if (services?.bridge) {
@@ -215,6 +274,7 @@ export const createHttpServer = (
           transport: {
             slack: config.SLACK_ENABLED,
             discord: config.DISCORD_ENABLED,
+            provider: config.CHAT_TRANSPORT_PROVIDER,
             controlSocket: config.CONTROL_SOCKET_PATH,
           },
           engineMode: config.ENGINE_MODE,
@@ -223,6 +283,7 @@ export const createHttpServer = (
         },
         sessions: control.listSessions(),
         aliases: control.listAliases(),
+        transports: services?.transportStatus ? services.transportStatus() : null,
         orchestration,
       });
       return;
@@ -846,6 +907,7 @@ export const createHttpServer = (
           release: services?.release,
           audit,
           reconciliation: services?.startupReconciliation,
+          transportStatus: services?.transportStatus ? services.transportStatus() : undefined,
         });
 
         writeJson(res, 200, bundle);

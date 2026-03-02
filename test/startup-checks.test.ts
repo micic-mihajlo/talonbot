@@ -140,4 +140,17 @@ describe('startup validation', () => {
     expect(thrown).toBeInstanceOf(StartupValidationError);
     expect((thrown as StartupValidationError).issues.some((issue) => issue.code === 'missing_engine_command')).toBe(true);
   });
+
+  it('errors when chat-sdk provider is enabled without Redis URL', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      CHAT_TRANSPORT_PROVIDER: 'chat_sdk',
+      CHAT_SDK_REDIS_URL: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+    const issue = issues.find((entry) => entry.code === 'chat_sdk_redis_url_missing');
+    expect(issue?.severity).toBe('error');
+  });
 });

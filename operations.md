@@ -23,6 +23,26 @@ curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/bri
 curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/sentry/status | jq
 ```
 
+Transport provider rollout:
+
+```bash
+# legacy (default)
+CHAT_TRANSPORT_PROVIDER=legacy
+
+# dual-run (Redis required)
+CHAT_TRANSPORT_PROVIDER=dual
+CHAT_SDK_REDIS_URL=redis://127.0.0.1:6379/0
+
+# cutover
+CHAT_TRANSPORT_PROVIDER=chat_sdk
+```
+
+Dual mode defaults to legacy outbound sender ownership. To flip outbound ownership to Chat SDK:
+
+```bash
+CHAT_SDK_DISABLE_LEGACY_OUTBOUND=true
+```
+
 ## Task operations
 
 ```bash

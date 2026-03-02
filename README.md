@@ -4,6 +4,7 @@
 
 - Slack ingress (Socket Mode)
 - Discord ingress
+- Optional Chat SDK transport backend (`legacy` / `chat_sdk` / `dual`) with Redis-backed state
 - Per-route session queues and persistent context
 - Operator control surface (HTTP + Unix socket)
 - Pluggable local execution engine (mock mode included)
@@ -111,6 +112,12 @@ Strict mode defaults:
 - running/blocked/terminal task updates are posted through transport outboxes with retry/backoff
 - notifier bindings survive restart and resume lifecycle updates for in-flight tasks
 
+Transport provider modes:
+
+- `CHAT_TRANSPORT_PROVIDER=legacy` keeps existing Slack Bolt + Discord gateway transports.
+- `CHAT_TRANSPORT_PROVIDER=chat_sdk` runs Chat SDK transport only (Redis required).
+- `CHAT_TRANSPORT_PROVIDER=dual` runs both stacks with cross-stack dedupe guard; primary outbound can stay legacy unless `CHAT_SDK_DISABLE_LEGACY_OUTBOUND=true`.
+
 Run health/config sanity checks locally with:
 
 ```bash
@@ -173,6 +180,7 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 
 - `GET /health`
 - `GET /status`
+- `POST /chat-sdk/webhooks/slack`, `POST /chat-sdk/webhooks/discord`
 - `GET /sessions`
 - `GET /aliases`
 - `POST /dispatch` or `POST /send`
@@ -195,6 +203,7 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 - task binding recovery state
 - startup reconciliation snapshot
 - transport outbox states (`.discord` / `.slack`)
+- transport stack status snapshot (`transport-status.json`)
 
 Example:
 
