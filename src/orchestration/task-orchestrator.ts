@@ -22,6 +22,7 @@ import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
 import { verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
+import { inferRequiresVerifiedPr } from './task-intent.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -355,6 +356,7 @@ export class TaskOrchestrator {
       repoId: repo.id,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
+      requiresVerifiedPr: input.requiresVerifiedPr,
     });
 
     this.tasks.set(task.id, task);
@@ -435,6 +437,7 @@ export class TaskOrchestrator {
 
   private async submitFanout(input: SubmitTaskInput) {
     const fanout = input.fanout || [];
+    const requiresVerifiedPr = input.requiresVerifiedPr;
     const repo = this.resolveRepo(input.repoId);
 
     const parent = this.createTask({
@@ -444,6 +447,7 @@ export class TaskOrchestrator {
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
       status: 'blocked',
+      requiresVerifiedPr,
     });
 
     this.tasks.set(parent.id, parent);
@@ -456,6 +460,7 @@ export class TaskOrchestrator {
         repoId: repo.id,
         sessionKey: input.sessionKey,
         parentTaskId: parent.id,
+        requiresVerifiedPr,
       });
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
@@ -475,6 +480,7 @@ export class TaskOrchestrator {
     sessionKey?: string;
     parentTaskId?: string;
     status?: TaskStatus;
+    requiresVerifiedPr?: boolean;
   }): TaskRecord {
     const now = new Date().toISOString();
     const id = randomId('task');
@@ -486,6 +492,7 @@ export class TaskOrchestrator {
       parentTaskId: input.parentTaskId,
       sessionKey: input.sessionKey,
       source: input.source,
+      requiresVerifiedPr: input.requiresVerifiedPr,
       text: input.text,
       repoId: input.repoId,
       status,
@@ -735,7 +742,7 @@ export class TaskOrchestrator {
         }
       }
 
-      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport') {
+      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport' && this.shouldRequireVerifiedPr(task)) {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl) : false;
         if (!verified) {
@@ -1270,6 +1277,7 @@ export class TaskOrchestrator {
       branch: typeof raw.branch === 'string' ? raw.branch : typeof primaryArtifact?.branch === 'string' ? primaryArtifact.branch : undefined,
       retryCount: Number.isFinite(raw.retryCount) ? Number(raw.retryCount) : 0,
       maxRetries: Number.isFinite(raw.maxRetries) ? Number(raw.maxRetries) : this.config.WORKER_MAX_RETRIES,
+      requiresVerifiedPr: typeof raw.requiresVerifiedPr === 'boolean' ? raw.requiresVerifiedPr : undefined,
       escalationRequired: Boolean(raw.escalationRequired),
       error: typeof raw.error === 'string' ? raw.error : undefined,
       artifacts: normalizedArtifacts,
@@ -1291,6 +1299,14 @@ export class TaskOrchestrator {
             }))
         : [],
     };
+  }
+
+  private shouldRequireVerifiedPr(task: TaskRecord) {
+    if (typeof task.requiresVerifiedPr === 'boolean') {
+      return task.requiresVerifiedPr;
+    }
+
+    return inferRequiresVerifiedPr(task.text);
   }
 
   private normalizeArtifact(raw: unknown): TaskArtifact | null {

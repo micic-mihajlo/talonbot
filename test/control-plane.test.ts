@@ -411,4 +411,88 @@ describe('control plane task-first dispatch', () => {
     expect(submitCalls).toBe(0);
     expect(replies.some((text) => text.includes('engine:give me a plain response'))).toBe(true);
   });
+
+  it('does not mark research-style transport tasks as PR-required', async () => {
+    let submitCalls = 0;
+    let receivedRequirements: boolean | null = null;
+    const fakeTasks = {
+      submitTask: async ({ text, requiresVerifiedPr }: { text: string; source?: string; requiresVerifiedPr?: boolean }) => {
+        submitCalls += 1;
+        receivedRequirements = requiresVerifiedPr ?? null;
+        return {
+          id: `task-${submitCalls}`,
+          text,
+          repoId: 'default',
+          source: 'transport',
+          status: 'done',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+      },
+      getTask: () => null,
+      buildTaskReport: () => null,
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    const replies: string[] = [];
+    await controlPlane.initialize();
+
+    await controlPlane.dispatch(mkInboundMessage('researching how this repo works'), {
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+
+    expect(submitCalls).toBe(1);
+    expect(receivedRequirements).toBe(false);
+    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+  });
+
+  it('marks implementation transport tasks as PR-required', async () => {
+    let submitCalls = 0;
+    let receivedRequirements: boolean | null = null;
+    const fakeTasks = {
+      submitTask: async ({ text, requiresVerifiedPr }: { text: string; source?: string; requiresVerifiedPr?: boolean }) => {
+        submitCalls += 1;
+        receivedRequirements = requiresVerifiedPr ?? null;
+        return {
+          id: `task-${submitCalls}`,
+          text,
+          repoId: 'default',
+          source: 'transport',
+          status: 'done',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+      },
+      getTask: () => null,
+      buildTaskReport: () => null,
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    const replies: string[] = [];
+    await controlPlane.initialize();
+
+    await controlPlane.dispatch(mkInboundMessage('implement OAuth token rotation flow'), {
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+
+    expect(submitCalls).toBe(1);
+    expect(receivedRequirements).toBe(true);
+    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+  });
 });

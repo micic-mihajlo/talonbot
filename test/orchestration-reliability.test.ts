@@ -209,6 +209,37 @@ describe('task orchestration reliability upgrades', () => {
     expect(lifecycle).toContain('task_running');
     expect(lifecycle).toContain('task_blocked');
   });
+
+  it('does not require verified PR for review-oriented transport tasks', async () => {
+    const repoDir = path.join(sandbox, 'repo-chat-review');
+    await initGitRepo(repoDir);
+
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: true,
+      }),
+    );
+    await orchestrator.initialize();
+    await orchestrator.registerRepo({
+      id: 'repo-chat-review',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const task = await orchestrator.submitTask({
+      text: 'Can you review this module and summarize recommendations?',
+      repoId: 'repo-chat-review',
+      source: 'transport',
+    });
+
+    await waitFor(() => orchestrator?.getTask(task.id)?.status === 'done', 15000);
+    const done = orchestrator.getTask(task.id);
+    expect(done?.status).toBe('done');
+    expect(done?.error).toBeUndefined();
+    expect(done?.requiresVerifiedPr).toBeUndefined();
+  });
 });
 
 describe('worker launcher + health monitor', () => {

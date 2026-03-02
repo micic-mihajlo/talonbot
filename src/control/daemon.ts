@@ -24,6 +24,7 @@ import { createLogger } from '../utils/logger.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import { TaskUpdateNotifier, type OutboundThreadMessage, type OutboundThreadSender } from './task-update-notifier.js';
 import type { TaskThreadBinding } from './store.js';
+import { inferRequiresVerifiedPr } from '../orchestration/task-intent.js';
 
 export interface DispatchResult {
   accepted: boolean;
@@ -839,6 +840,7 @@ export class ControlPlane {
         text,
         sessionKey,
         source: 'transport',
+        requiresVerifiedPr: inferRequiresVerifiedPr(text),
       });
 
       await this.trackTaskBinding(task.id, sessionKey, message);
