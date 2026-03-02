@@ -298,6 +298,10 @@ talonbot operator
 talonbot tasks list
 ```
 
+## Testing Notes
+
+- Automated Discord task test passed v2
+
 ## Troubleshooting quick hits
 
 - `talonbot status` shows service errors:
