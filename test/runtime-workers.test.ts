@@ -125,7 +125,7 @@ describe('runtime worker endpoints', () => {
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-    control.stop();
+    await control.stop();
     await rm(sandbox, { recursive: true, force: true });
   });
 

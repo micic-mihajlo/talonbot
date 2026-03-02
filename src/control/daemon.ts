@@ -1496,15 +1496,18 @@ export class ControlPlane {
     } as SessionMetadata));
   }
 
-  stop() {
+  async stop() {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
     }
-    void this.taskNotifier?.stop();
+    await this.taskNotifier?.stop();
 
-    for (const sessionKey of Array.from(this.sessions.keys())) {
-      this.stopSession(sessionKey).catch(() => undefined);
-    }
+    const sessionKeys = Array.from(this.sessions.keys());
+    await Promise.all(
+      sessionKeys.map(async (sessionKey) => {
+        await this.stopSession(sessionKey).catch(() => undefined);
+      }),
+    );
   }
 
   private hasSeenEvent(eventId: string) {
