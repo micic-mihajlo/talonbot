@@ -12,7 +12,15 @@
 Chat behavior defaults:
 - `CHAT_DISPATCH_MODE=task`: non-command messages become tasks.
 - `chat:` or `/chat` forces conversational session execution.
-- `CHAT_REQUIRE_VERIFIED_PR=true`: task cannot reach `done` without verified PR URL.
+- `CHAT_REQUIRE_VERIFIED_PR=true`: implementation intent tasks cannot reach `done` without verified PR URL.
+
+Request policy matrix:
+- `implementation` -> required evidence: verified PR URL (and optional checks if configured)
+- `research` / `summarize` / `review` / `ops` / `unknown` -> required evidence: summary
+- all requests can be overridden with explicit `/dispatch` metadata keys:
+  - `taskIntent`
+  - `requiresVerifiedPr` / `requirePrOverride`
+  - `requiredArtifacts`
 
 ## Fan-out / fan-in
 

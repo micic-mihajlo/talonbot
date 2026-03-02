@@ -300,39 +300,87 @@ describe('control plane task-first dispatch', () => {
   it('queues transport messages as tasks and posts lifecycle updates', async () => {
     let engineCalls = 0;
     let submitCalls = 0;
-    const taskState = new Map<string, any>();
+    const taskState = new Map<
+      string,
+      {
+        id: string;
+        status: 'queued' | 'running' | 'done' | 'failed' | 'blocked' | 'cancelled';
+      }
+    >();
+    const submitted: Array<Record<string, any>> = [];
     const fakeTasks = {
-      submitTask: async ({ text, sessionKey, source }: { text: string; sessionKey?: string; source?: string }) => {
+      submitTask: async (input: Record<string, any>) => {
         submitCalls += 1;
+        submitted.push(input);
         const task = {
           id: `task-${submitCalls}`,
           repoId: 'default',
-          text,
-          sessionKey,
-          source,
+          text: input.text,
+          sessionKey: input.sessionKey,
+          source: input.source,
+          taskIntent: input.taskIntent,
+          requiresVerifiedPr: input.requiresVerifiedPr,
+          requiredArtifacts: input.requiredArtifacts,
           status: 'queued',
           assignedSession: `dev-agent-default-task-${submitCalls}`,
         };
         taskState.set(task.id, task);
         setTimeout(() => {
-          task.status = 'running';
+          const state = taskState.get(task.id);
+          if (state) {
+            state.status = 'running';
+          }
         }, 20);
         setTimeout(() => {
-          task.status = 'done';
+          const state = taskState.get(task.id);
+          if (state) {
+            state.status = 'done';
+          }
         }, 40);
         return task;
       },
-      getTask: (taskId: string) => taskState.get(taskId) || null,
-      buildTaskReport: (taskId: string) => ({
-        taskId,
-        status: 'done',
-        artifactState: 'artifact-backed',
-        generatedAt: new Date().toISOString(),
-        message: 'Applied changes and opened PR.',
-        evidence: {
-          prUrl: 'https://github.com/acme/repo/pull/1',
-        },
-      }),
+      getTask: (taskId: string) => {
+        const state = taskState.get(taskId);
+        if (!state) return null;
+        return {
+          id: taskId,
+          status: state.status,
+          requiredArtifacts: ['pr'],
+          requiresVerifiedPr: true,
+          taskIntent: 'implementation',
+          artifact: {
+            kind: 'pull_request',
+            at: new Date().toISOString(),
+            prUrl: 'https://github.com/acme/repo/pull/1',
+          },
+          artifacts: [
+            {
+              kind: 'summary',
+              at: new Date().toISOString(),
+              summary: 'Applied changes and opened PR.',
+            },
+            {
+              kind: 'pull_request',
+              at: new Date().toISOString(),
+              prUrl: 'https://github.com/acme/repo/pull/1',
+            },
+          ],
+        };
+      },
+      buildTaskReport: (taskId: string) => {
+        const state = taskState.get(taskId);
+        if (!state) return null;
+        return {
+          taskId,
+          status: state.status,
+          artifactState: 'artifact-backed',
+          generatedAt: new Date().toISOString(),
+          message: 'Applied changes and opened PR.',
+          evidence: {
+            prUrl: 'https://github.com/acme/repo/pull/1',
+          },
+        };
+      },
     };
 
     const config = {
@@ -367,11 +415,81 @@ describe('control plane task-first dispatch', () => {
     expect(dispatch.accepted).toBe(true);
     expect(dispatch.reason).toBe('task_queued');
     expect(submitCalls).toBe(1);
+    expect(submitted[0]).toMatchObject({
+      taskIntent: 'implementation',
+      requiresVerifiedPr: true,
+      requiredArtifacts: ['pr'],
+    });
     expect(engineCalls).toBe(0);
     expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
 
     await waitFor(() => replies.some((text) => text.includes('Task task-1 completed')), 2000);
     expect(replies.some((text) => text.includes('github.com/acme/repo/pull/1'))).toBe(true);
+  });
+
+  it('does not apply verified-pr gate for research intent', async () => {
+    let submitCalls = 0;
+    const submitted: Array<Record<string, any>> = [];
+    const fakeTasks = {
+      submitTask: async (input: Record<string, any>) => {
+        submitCalls += 1;
+        submitted.push(input);
+        return {
+          id: `task-${submitCalls}`,
+          repoId: 'default',
+          text: input.text,
+          sessionKey: input.sessionKey,
+          source: input.source,
+          taskIntent: input.taskIntent,
+          requiresVerifiedPr: input.requiresVerifiedPr,
+          requiredArtifacts: input.requiredArtifacts,
+          status: 'done',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+      },
+      getTask: () => ({ status: 'done' }),
+      buildTaskReport: () => ({
+        taskId: 'task-1',
+        status: 'done',
+        artifactState: 'artifact-backed',
+        generatedAt: new Date().toISOString(),
+        message: 'Research summary complete.',
+        evidence: {},
+      }),
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+        CHAT_TASK_UPDATE_POLL_MS: 10,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    await controlPlane.initialize();
+    controlPlane.registerOutboundSender('socket', async (message) => {});
+
+    const dispatch = await controlPlane.dispatch(
+      {
+        ...mkInboundMessage('Research the latest error patterns in recent releases.'),
+        metadata: {
+          task_intent: 'research',
+        },
+      },
+      {
+        reply: async () => {},
+      },
+    );
+
+    expect(dispatch.accepted).toBe(true);
+    expect(dispatch.reason).toBe('task_queued');
+    expect(submitCalls).toBe(1);
+    expect(submitted[0]).toMatchObject({
+      taskIntent: 'research',
+      requiresVerifiedPr: false,
+      requiredArtifacts: ['summary'],
+    });
   });
 
   it('routes chat-prefixed messages to session engine while in task mode', async () => {
@@ -410,5 +528,124 @@ describe('control plane task-first dispatch', () => {
 
     expect(submitCalls).toBe(0);
     expect(replies.some((text) => text.includes('engine:give me a plain response'))).toBe(true);
+  });
+
+  it('does not treat bare "chat" or "task" words as command overrides', async () => {
+    let submitCalls = 0;
+    const submitted: Array<Record<string, any>> = [];
+    const fakeTasks = {
+      submitTask: async (input: Record<string, any>) => {
+        submitCalls += 1;
+        submitted.push(input);
+        return {
+          id: `task-${submitCalls}`,
+          repoId: 'default',
+          status: 'queued',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+      },
+      getTask: () => null,
+      buildTaskReport: () => null,
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+        CHAT_TASK_UPDATE_POLL_MS: 10,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    await controlPlane.initialize();
+
+    const replies: string[] = [];
+    const dispatch = await controlPlane.dispatch(
+      mkInboundMessage('chat management should stay as task flow not chat mode'),
+      {
+        reply: async (text) => {
+          replies.push(text);
+        },
+      },
+    );
+
+    expect(dispatch.accepted).toBe(true);
+    expect(dispatch.mode).toBe('task');
+    expect(submitCalls).toBe(1);
+    expect(submitted[0]).toMatchObject({
+      taskIntent: 'unknown',
+      requiresVerifiedPr: false,
+    });
+    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+    expect(replies.some((text) => text.includes('task-1'))).toBe(true);
+  });
+
+  it('applies explicit metadata policy overrides', async () => {
+    let submitCalls = 0;
+    const submitted: Array<Record<string, any>> = [];
+    const fakeTasks = {
+      submitTask: async (input: Record<string, any>) => {
+        submitCalls += 1;
+        submitted.push(input);
+        return {
+          id: `task-${submitCalls}`,
+          repoId: 'default',
+          status: 'queued',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+      },
+      getTask: () => null,
+      buildTaskReport: () => null,
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+        CHAT_TASK_UPDATE_POLL_MS: 10,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    await controlPlane.initialize();
+    const replies: string[] = [];
+
+    const strictDispatch = await controlPlane.dispatch(
+      {
+        ...mkInboundMessage('Implement secure restart workflow'),
+        metadata: {
+          taskIntent: 'implementation',
+          requiresVerifiedPr: 'false',
+          requiredArtifacts: 'summary',
+        },
+      },
+      { reply: async (text) => replies.push(text) },
+    );
+
+    expect(strictDispatch.accepted).toBe(true);
+    expect(submitCalls).toBe(1);
+    expect(submitted[0]).toMatchObject({
+      taskIntent: 'implementation',
+      requiresVerifiedPr: false,
+      requiredArtifacts: ['summary'],
+    });
+
+    const researchWithOverride = await controlPlane.dispatch(
+      {
+        ...mkInboundMessage('Research rollout risks in this stack'),
+        metadata: {
+          requirePrOverride: 'true',
+        },
+      },
+      { reply: async (text) => replies.push(text) },
+    );
+
+    expect(researchWithOverride.accepted).toBe(true);
+    expect(submitCalls).toBe(2);
+    expect(submitted[1]).toMatchObject({
+      taskIntent: 'research',
+      requiresVerifiedPr: true,
+    });
+    expect(submitted[1].requiredArtifacts?.includes('pr')).toBe(true);
   });
 });

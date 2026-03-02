@@ -91,9 +91,23 @@ You should get an accepted response from `/dispatch` and a reply text in logs/JS
 
 When `CHAT_DISPATCH_MODE=task` (default), non-command Discord/Slack messages queue orchestration tasks and stream task lifecycle updates back to the same thread. Use `chat: ...` (or `/chat ...`) to force plain conversational session mode for a single message.
 
+Task completion policy is intent-aware:
+
+- `implementation` intent: requires verified PR evidence when policy is enabled (`CHAT_REQUIRE_VERIFIED_PR=true`).
+- `review`, `research`, `summarize`, `ops`, `unknown`: complete when required artifacts are present (summary by default).
+- explicit overrides can be passed in `/dispatch` metadata:
+  - `taskIntent`
+  - `requiresVerifiedPr` / `requirePrOverride`
+  - `requiredArtifacts`
+
+Examples:
+
+- `Implement API contract validation for new endpoint` → terminal proof requires PR.
+- `Research rollout risks in this repo` → terminal proof requires summary.
+
 Strict mode defaults:
 
-- chat-sourced tasks require verified PR evidence before reaching `done` (`CHAT_REQUIRE_VERIFIED_PR=true`)
+- task intent policy defaults to `CHAT_REQUIRE_VERIFIED_PR=true` for implementation requests.
 - running/blocked/terminal task updates are posted through transport outboxes with retry/backoff
 - notifier bindings survive restart and resume lifecycle updates for in-flight tasks
 

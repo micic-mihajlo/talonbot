@@ -24,6 +24,7 @@ import { createLogger } from '../utils/logger.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import { TaskUpdateNotifier, type OutboundThreadMessage, type OutboundThreadSender } from './task-update-notifier.js';
 import type { TaskThreadBinding } from './store.js';
+import type { TaskIntent, RequiredArtifactKind } from '../orchestration/types.js';
 
 export interface DispatchResult {
   accepted: boolean;
@@ -91,6 +92,173 @@ const writeResponse = (socket: net.Socket, response: ControlRpcResponse | Contro
   }
 };
 
+const TASK_INTENT_TOKEN_SETS: ReadonlyArray<{
+  intent: TaskIntent;
+  tokens: ReadonlyArray<string>;
+}> = [
+  {
+    intent: 'implementation',
+    tokens: [
+      'implement',
+      'implementation',
+      'fix',
+      'patch',
+      'create',
+      'add',
+      'modify',
+      'change',
+      'build',
+      'develop',
+      'refactor',
+      'remove',
+      'delete',
+      'setup',
+      'deploy',
+      'release',
+    ],
+  },
+  { intent: 'review', tokens: ['review', 'inspect', 'audit', 'evaluate', 'analyze', 'checks', 'validate'] },
+  { intent: 'research', tokens: ['research', 'investigate', 'study', 'explore', 'compare', 'check'] },
+  { intent: 'summarize', tokens: ['summarize', 'summary', 'brief', 'recap', 'tl;dr'] },
+  {
+    intent: 'ops',
+    tokens: ['ops', 'restart', 'reboot', 'service', 'deploy', 'incident', 'rollback', 'scale', 'alert', 'observability', 'health'],
+  },
+];
+
+interface TaskPolicyHintInput {
+  taskIntent?: TaskIntent;
+  requiresVerifiedPr?: boolean;
+  requirePrOverride?: boolean;
+  requiredArtifacts?: Array<'summary' | 'branch' | 'commit' | 'pr'>;
+}
+
+interface TaskPolicy {
+  taskIntent: TaskIntent;
+  requiresVerifiedPr: boolean;
+  requiredArtifacts: RequiredArtifactKind[];
+}
+
+const normalizeTaskArtifactKinds = (artifacts?: ReadonlyArray<string> | string | undefined): RequiredArtifactKind[] | undefined => {
+  if (typeof artifacts === 'string') {
+    artifacts = artifacts.split(',').map((value) => value.trim());
+  }
+
+  if (!artifacts?.length) {
+    return undefined;
+  }
+
+  const next = new Set<RequiredArtifactKind>();
+  for (const artifact of artifacts) {
+    if (artifact === 'summary' || artifact === 'branch' || artifact === 'commit' || artifact === 'pr') {
+      next.add(artifact);
+    }
+  }
+
+  return next.size > 0 ? Array.from(next) : undefined;
+};
+
+const parseBooleanMetadata = (value: string | boolean | undefined): boolean | undefined => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'undefined') return value;
+
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+};
+
+const isValidTaskIntent = (value: string): value is TaskIntent =>
+  value === 'research' || value === 'review' || value === 'summarize' || value === 'implementation' || value === 'ops' || value === 'unknown';
+
+const uniqueArtifacts = (artifacts: ReadonlyArray<RequiredArtifactKind>) => [...new Set(artifacts)].sort();
+
+const defaultArtifactsForPolicy = (requiresVerifiedPr: boolean): RequiredArtifactKind[] =>
+  requiresVerifiedPr ? uniqueArtifacts(['pr']) : uniqueArtifacts(['summary']);
+
+const parseTaskIntent = (value: string | undefined): TaskIntent | undefined => {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return isValidTaskIntent(normalized) ? normalized : undefined;
+};
+
+const inferTaskIntent = (text: string): TaskIntent => {
+  const tokens = text.toLowerCase().match(/[a-z0-9_-]+/g) || [];
+  const tokenSet = new Set(tokens);
+  for (const rule of TASK_INTENT_TOKEN_SETS) {
+    if (rule.tokens.some((token) => tokenSet.has(token))) {
+      return rule.intent;
+    }
+  }
+  return 'unknown';
+};
+
+const normalizePolicyMetadata = (metadata: Record<string, string> | undefined): TaskPolicyHintInput => {
+  if (!metadata) {
+    return {};
+  }
+
+  return {
+    taskIntent: parseTaskIntent(metadata.taskIntent || metadata.task_intent),
+    requiresVerifiedPr: parseBooleanMetadata(metadata.requiresVerifiedPr || metadata.requires_verified_pr),
+    requirePrOverride: parseBooleanMetadata(metadata.requirePrOverride || metadata.require_pr_override),
+    requiredArtifacts: normalizeTaskArtifactKinds(metadata.requiredArtifacts || metadata.required_artifacts),
+  };
+};
+
+const coerceTaskPolicyHint = (hint: TaskPolicyHintInput | undefined): TaskPolicyHintInput => {
+  if (!hint) return {};
+  const result: TaskPolicyHintInput = {};
+  if (hint.taskIntent) {
+    result.taskIntent = hint.taskIntent;
+  }
+  if (typeof hint.requiresVerifiedPr === 'boolean') {
+    result.requiresVerifiedPr = hint.requiresVerifiedPr;
+  }
+  if (typeof hint.requirePrOverride === 'boolean') {
+    result.requirePrOverride = hint.requirePrOverride;
+  }
+  const normalizedArtifacts = normalizeTaskArtifactKinds(hint.requiredArtifacts);
+  if (normalizedArtifacts) {
+    result.requiredArtifacts = normalizedArtifacts;
+  }
+  return result;
+};
+
+const resolveTaskPolicy = (input: {
+  text: string;
+  messageMetadata: Record<string, string>;
+  taskPolicyHint?: TaskPolicyHintInput;
+  defaultVerifiedPr: boolean;
+}): TaskPolicy => {
+  const metadataHint = normalizePolicyMetadata(input.messageMetadata);
+  const policyHint = {
+    ...coerceTaskPolicyHint(metadataHint),
+    ...coerceTaskPolicyHint(input.taskPolicyHint),
+  };
+
+  const taskIntent = policyHint.taskIntent ?? inferTaskIntent(input.text);
+  const requiresVerifiedPr =
+    typeof policyHint.requirePrOverride === 'boolean'
+      ? policyHint.requirePrOverride
+      : typeof policyHint.requiresVerifiedPr === 'boolean'
+        ? policyHint.requiresVerifiedPr
+        : taskIntent === 'implementation'
+          ? input.defaultVerifiedPr
+          : false;
+
+  let requiredArtifacts = normalizeTaskArtifactKinds(policyHint.requiredArtifacts) || defaultArtifactsForPolicy(requiresVerifiedPr);
+  if (requiresVerifiedPr && !requiredArtifacts.includes('pr')) {
+    requiredArtifacts = uniqueArtifacts([...requiredArtifacts, 'pr']);
+  }
+
+  return {
+    taskIntent,
+    requiresVerifiedPr,
+    requiredArtifacts,
+  };
+};
+
 export class ControlPlane {
   private readonly logger: ReturnType<typeof createLogger>;
   private readonly sessions = new Map<string, SessionLookup>();
@@ -138,7 +306,11 @@ export class ControlPlane {
     this.startCleanupTimer();
   }
 
-  async dispatch(message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
+  async dispatch(
+    message: InboundMessage,
+    callbacks: RunnerContext,
+    taskPolicyHint?: TaskPolicyHintInput,
+  ): Promise<DispatchResult> {
     const route = routeFromMessage(message);
     const normalized = message.text.trim();
 
@@ -168,7 +340,7 @@ export class ControlPlane {
     }
 
     if (this.shouldDispatchTaskFlow(directive.modeOverride)) {
-      return this.dispatchToTask(route.sessionKey, routedMessage, callbacks);
+      return this.dispatchToTask(route.sessionKey, routedMessage, callbacks, taskPolicyHint);
     }
 
     return this.dispatchToSession(route.sessionKey, routedMessage, callbacks);
@@ -819,7 +991,12 @@ export class ControlPlane {
     return true;
   }
 
-  private async dispatchToTask(sessionKey: string, message: InboundMessage, callbacks: RunnerContext): Promise<DispatchResult> {
+  private async dispatchToTask(
+    sessionKey: string,
+    message: InboundMessage,
+    callbacks: RunnerContext,
+    taskPolicyHint?: TaskPolicyHintInput,
+  ): Promise<DispatchResult> {
     if (!this.tasks) {
       return this.dispatchToSession(sessionKey, message, callbacks);
     }
@@ -835,10 +1012,19 @@ export class ControlPlane {
     }
 
     try {
+      const policy = resolveTaskPolicy({
+        text,
+        messageMetadata: message.metadata,
+        taskPolicyHint,
+        defaultVerifiedPr: this.config.CHAT_REQUIRE_VERIFIED_PR,
+      });
       const task = await this.tasks.submitTask({
         text,
         sessionKey,
         source: 'transport',
+        taskIntent: policy.taskIntent,
+        requiresVerifiedPr: policy.requiresVerifiedPr,
+        requiredArtifacts: policy.requiredArtifacts,
       });
 
       await this.trackTaskBinding(task.id, sessionKey, message);

@@ -6,11 +6,13 @@ import type { AppConfig } from '../config.js';
 import type {
   RepoRegistration,
   RepoRegistrationInput,
+  RequiredArtifactKind,
   SubmitTaskInput,
   TaskArtifact,
   TaskLifecycleEvent,
   TaskLifecycleEventType,
   TaskProgressReport,
+  TaskIntent,
   TaskRecord,
   TaskSnapshot,
   TaskStatus,
@@ -24,6 +26,83 @@ import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './
 import { verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const normalizeArtifactKinds = (artifacts?: ReadonlyArray<string> | undefined): RequiredArtifactKind[] | undefined => {
+  if (!artifacts?.length) {
+    return undefined;
+  }
+
+  const next = new Set<RequiredArtifactKind>();
+  for (const artifact of artifacts) {
+    if (artifact === 'summary' || artifact === 'branch' || artifact === 'commit' || artifact === 'pr') {
+      next.add(artifact);
+    }
+  }
+
+  return next.size > 0 ? Array.from(next) : undefined;
+};
+
+const uniqueArtifacts = (artifacts: ReadonlyArray<RequiredArtifactKind>) => [...new Set(artifacts)];
+
+const TASK_INTENT_TOKEN_SETS: ReadonlyArray<{
+  intent: TaskIntent;
+  tokens: ReadonlyArray<string>;
+}> = [
+  {
+    intent: 'implementation',
+    tokens: [
+      'implement',
+      'implementation',
+      'fix',
+      'patch',
+      'create',
+      'add',
+      'modify',
+      'change',
+      'build',
+      'develop',
+      'refactor',
+      'remove',
+      'delete',
+      'setup',
+      'deploy',
+      'release',
+    ],
+  },
+  { intent: 'review', tokens: ['review', 'inspect', 'audit', 'evaluate', 'analyze', 'checks', 'validate'] },
+  { intent: 'research', tokens: ['research', 'investigate', 'study', 'explore', 'compare', 'check'] },
+  { intent: 'summarize', tokens: ['summarize', 'summary', 'brief', 'recap', 'tl;dr'] },
+  {
+    intent: 'ops',
+    tokens: [
+      'ops',
+      'restart',
+      'reboot',
+      'service',
+      'deploy',
+      'incident',
+      'rollback',
+      'scale',
+      'alert',
+      'observability',
+      'health',
+    ],
+  },
+];
+
+const inferTaskIntent = (text: string): TaskIntent => {
+  const tokens = text.toLowerCase().match(/[a-z0-9_-]+/g) || [];
+  const tokenSet = new Set(tokens);
+  for (const rule of TASK_INTENT_TOKEN_SETS) {
+    if (rule.tokens.some((token) => tokenSet.has(token))) {
+      return rule.intent;
+    }
+  }
+  return 'unknown';
+};
+
+const isTaskIntent = (value: unknown): value is TaskIntent =>
+  value === 'research' || value === 'review' || value === 'summarize' || value === 'implementation' || value === 'ops' || value === 'unknown';
 
 const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'failed', 'blocked', 'cancelled']);
 
@@ -355,6 +434,10 @@ export class TaskOrchestrator {
       repoId: repo.id,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
+      taskIntent: input.taskIntent,
+      requirePrOverride: input.requirePrOverride,
+      requiresVerifiedPr: input.requiresVerifiedPr,
+      requiredArtifacts: input.requiredArtifacts,
     });
 
     this.tasks.set(task.id, task);
@@ -443,6 +526,10 @@ export class TaskOrchestrator {
       repoId: repo.id,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
+      taskIntent: input.taskIntent,
+      requirePrOverride: input.requirePrOverride,
+      requiresVerifiedPr: input.requiresVerifiedPr,
+      requiredArtifacts: input.requiredArtifacts,
       status: 'blocked',
     });
 
@@ -456,6 +543,10 @@ export class TaskOrchestrator {
         repoId: repo.id,
         sessionKey: input.sessionKey,
         parentTaskId: parent.id,
+        taskIntent: input.taskIntent,
+        requirePrOverride: input.requirePrOverride,
+        requiresVerifiedPr: input.requiresVerifiedPr,
+        requiredArtifacts: input.requiredArtifacts,
       });
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
@@ -475,16 +566,36 @@ export class TaskOrchestrator {
     sessionKey?: string;
     parentTaskId?: string;
     status?: TaskStatus;
+    taskIntent?: TaskIntent;
+    requiresVerifiedPr?: boolean;
+    requirePrOverride?: boolean;
+    requiredArtifacts?: SubmitTaskInput['requiredArtifacts'];
   }): TaskRecord {
     const now = new Date().toISOString();
     const id = randomId('task');
     const status = input.status || 'queued';
     const assignedSession = this.launcher.assignedSession(input.repoId, id, input.text);
+    const inferredTaskIntent = inferTaskIntent(input.text);
+    const configuredIntent = isTaskIntent(input.taskIntent) ? input.taskIntent : inferredTaskIntent;
+    const requiresVerifiedPr =
+      typeof input.requirePrOverride === 'boolean'
+        ? input.requirePrOverride
+        : typeof input.requiresVerifiedPr === 'boolean'
+          ? input.requiresVerifiedPr
+          : configuredIntent === 'implementation'
+            ? this.config.CHAT_REQUIRE_VERIFIED_PR
+            : false;
+    const requiredArtifacts = normalizeArtifactKinds(input.requiredArtifacts) || (requiresVerifiedPr ? ['pr'] : ['summary']);
 
     return {
       id,
       parentTaskId: input.parentTaskId,
       sessionKey: input.sessionKey,
+      taskIntent: configuredIntent,
+      requiresVerifiedPr,
+      requiredArtifacts: uniqueArtifacts(
+        requiresVerifiedPr && requiredArtifacts && !requiredArtifacts.includes('pr') ? [...requiredArtifacts, 'pr'] : requiredArtifacts || ['summary'],
+      ),
       source: input.source,
       text: input.text,
       repoId: input.repoId,
@@ -541,6 +652,52 @@ export class TaskOrchestrator {
         }
       });
     }
+  }
+
+  private getTaskCompletionPolicy(task: TaskRecord) {
+    const taskIntent = isTaskIntent(task.taskIntent) ? task.taskIntent : inferTaskIntent(task.text);
+    const requiresVerifiedPr =
+      typeof task.requiresVerifiedPr === 'boolean'
+        ? task.requiresVerifiedPr
+        : taskIntent === 'implementation'
+          ? this.config.CHAT_REQUIRE_VERIFIED_PR
+          : false;
+    const requiredArtifacts = uniqueArtifacts(normalizeArtifactKinds(task.requiredArtifacts) || (requiresVerifiedPr ? ['pr'] : ['summary']));
+    const effectiveRequiredArtifacts = requiresVerifiedPr && !requiredArtifacts.includes('pr') ? uniqueArtifacts([...requiredArtifacts, 'pr']) : requiredArtifacts;
+
+    return {
+      taskIntent,
+      requiresVerifiedPr,
+      requiredArtifacts: effectiveRequiredArtifacts,
+    };
+  }
+
+  private getMissingRequiredArtifacts(task: TaskRecord, requiredArtifacts: RequiredArtifactKind[]) {
+    const missing: RequiredArtifactKind[] = [];
+    for (const artifact of requiredArtifacts) {
+      const present = this.hasArtifactForCompletionTask(task, artifact);
+      if (!present) {
+        missing.push(artifact);
+      }
+    }
+    return missing;
+  }
+
+  private hasArtifactForCompletionTask(task: TaskRecord, artifact: RequiredArtifactKind) {
+    if (artifact === 'summary') {
+      return Boolean(task.artifacts.some((item) => item.kind === 'summary'));
+    }
+    if (artifact === 'commit') {
+      return Boolean(this.latestArtifact(task, 'git_commit'));
+    }
+    if (artifact === 'pr') {
+      const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+      return Boolean(prUrl);
+    }
+    if (artifact === 'branch') {
+      return Boolean(task.branch || this.latestArtifact(task, 'launcher')?.branch);
+    }
+    return false;
   }
 
   private async runTask(taskId: string) {
@@ -735,7 +892,10 @@ export class TaskOrchestrator {
         }
       }
 
-      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport') {
+      const policy = this.getTaskCompletionPolicy(task);
+      const missingRequiredArtifacts = this.getMissingRequiredArtifacts(task, policy.requiredArtifacts);
+
+      if (policy.requiresVerifiedPr) {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl) : false;
         if (!verified) {
@@ -757,12 +917,43 @@ export class TaskOrchestrator {
             details: {
               reason: 'verified_pr_required',
               prUrl: prUrl || '',
+              requiredArtifacts: policy.requiredArtifacts.join(','),
             },
           });
           await this.persist();
           this.updateParentState(task);
           return;
         }
+      }
+
+      if (missingRequiredArtifacts.length > 0) {
+        const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+        const missing = missingRequiredArtifacts.join(', ');
+        task.error = `blocked: required_artifacts_missing - ${missing}`;
+        this.appendArtifact(
+          task,
+          {
+            kind: 'error',
+            at: new Date().toISOString(),
+            summary: `Task blocked pending required artifacts: ${missing}.`,
+            prUrl,
+          },
+          false,
+        );
+        this.transitionTask(task, {
+          to: 'blocked',
+          kind: 'blocked',
+          message: `Blocked pending required artifacts: ${missing}.`,
+          details: {
+            reason: 'required_artifacts_missing',
+            requiredArtifacts: policy.requiredArtifacts.join(','),
+            missingArtifacts: missingRequiredArtifacts,
+            prUrl: prUrl || '',
+          },
+        });
+        await this.persist();
+        this.updateParentState(task);
+        return;
       }
 
       this.ensureNoArtifactState(task, 'done');
@@ -1254,6 +1445,13 @@ export class TaskOrchestrator {
     }
 
     const primaryArtifact = legacyArtifact || normalizedArtifacts[normalizedArtifacts.length - 1];
+    const inferredTaskIntent = inferTaskIntent(typeof raw.text === 'string' ? raw.text : '');
+    const requiresVerifiedPr =
+      typeof raw.requiresVerifiedPr === 'boolean'
+        ? raw.requiresVerifiedPr
+        : inferredTaskIntent === 'implementation'
+          ? this.config.CHAT_REQUIRE_VERIFIED_PR
+          : false;
 
     return {
       id: raw.id,
@@ -1262,6 +1460,11 @@ export class TaskOrchestrator {
       source: raw.source === 'transport' || raw.source === 'webhook' || raw.source === 'operator' || raw.source === 'system' ? raw.source : 'operator',
       text: typeof raw.text === 'string' ? raw.text : '',
       repoId: typeof raw.repoId === 'string' ? raw.repoId : '',
+      taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferredTaskIntent,
+      requiresVerifiedPr,
+      requiredArtifacts:
+        normalizeArtifactKinds(Array.isArray(raw.requiredArtifacts) ? raw.requiredArtifacts : undefined) ||
+        (requiresVerifiedPr ? ['pr'] : ['summary']),
       status,
       state: status,
       assignedSession,

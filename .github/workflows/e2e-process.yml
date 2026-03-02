@@ -7,8 +7,8 @@ on:
   pull_request:
 
 concurrency:
-  group: e2e-process-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-process-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   process-engine-e2e:
@@ -42,7 +42,9 @@ jobs:
         run: |
           set -euo pipefail
           RUNTIME_TMP="$(mktemp -d /tmp/talonbot-e2e-runtime.XXXXXX)"
-          mkdir -p "$RUNTIME_TMP/engine" "$RUNTIME_TMP/data" "$RUNTIME_TMP/worktrees"
+          LOG_PATH="$RUNTIME_TMP/process-e2e.log"
+          REPORT_DIR="$RUNTIME_TMP/reports"
+          mkdir -p "$RUNTIME_TMP/engine" "$RUNTIME_TMP/data" "$RUNTIME_TMP/worktrees" "$REPORT_DIR"
 
           CONTROL_AUTH_TOKEN=e2e-process-control-token-abcdefghijklmnopqrstuvwxyz \
           CONTROL_HTTP_PORT=8092 \
@@ -58,13 +60,14 @@ jobs:
           STARTUP_INTEGRITY_MODE=warn \
           DISCORD_ENABLED=false \
           SLACK_ENABLED=false \
-          node dist/index.js >/tmp/talonbot-e2e-process-workflow.log 2>&1 &
+          node dist/index.js >"$LOG_PATH" 2>&1 &
           runtime_pid=$!
 
           cleanup() {
-            kill "$runtime_pid" 2>/dev/null || true
+            if kill -0 "$runtime_pid" 2>/dev/null; then
+              kill "$runtime_pid" 2>/dev/null || true
+            fi
             wait "$runtime_pid" 2>/dev/null || true
-            rm -rf "$RUNTIME_TMP"
           }
           trap cleanup EXIT
 
@@ -83,6 +86,7 @@ jobs:
             -d '{"source":"socket","channelId":"e2e","text":"chat: say e2e hello","senderId":"e2e"}' \
             http://127.0.0.1:8092/dispatch)
           echo "$DISPATCH"
+          echo "$DISPATCH" | tee "$REPORT_DIR/session-dispatch.json"
           echo "$DISPATCH" | grep -q '"accepted":true'
           echo "$DISPATCH" | grep -q '"mode":"session"'
 
@@ -96,6 +100,7 @@ jobs:
             -d '{"text":"Run strict transport task gate e2e.","repoId":"repo","source":"transport"}' \
             http://127.0.0.1:8092/tasks)
           echo "$TASK"
+          echo "$TASK" | tee "$REPORT_DIR/task-create.json"
           TASK_ID=$(echo "$TASK" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
           if [ -z "$TASK_ID" ]; then
             echo "task id missing"
@@ -105,6 +110,7 @@ jobs:
           for i in $(seq 1 180); do
             REPORT=$(curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
               http://127.0.0.1:8092/tasks/$TASK_ID)
+            echo "$REPORT" | tee "$REPORT_DIR/task-report-latest.json"
             STATE=$(echo "$REPORT" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' | head -n 1)
             if [ "$STATE" = "blocked" ]; then
               break
@@ -115,12 +121,13 @@ jobs:
           FINAL=$(curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
             http://127.0.0.1:8092/tasks/$TASK_ID)
           echo "$FINAL"
+          echo "$FINAL" | tee "$REPORT_DIR/task-report-final.json"
           echo "$FINAL" | grep -q '"status":"blocked"'
           echo "$FINAL" | grep -q '"artifactState":"artifact-backed"'
 
-      - name: Upload e2e runtime log on failure
+      - name: Upload e2e artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-process-runtime-log
-          path: /tmp/talonbot-e2e-process-workflow.log
+          name: e2e-process-artifacts-${{ github.run_id }}
+          path: /tmp/talonbot-e2e-runtime*/

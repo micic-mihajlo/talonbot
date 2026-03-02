@@ -38,6 +38,7 @@ export class TransportOutbox<TPayload> {
   private pumping = false;
   private closed = false;
   private lastCleanupAt = 0;
+  private persistChain: Promise<void> = Promise.resolve();
   private readonly cleanupIntervalMs = 60_000;
   private readonly sentRetentionMs = 60 * 60 * 1000;
   private readonly poisonRetentionMs = 24 * 60 * 60 * 1000;
@@ -215,16 +216,21 @@ export class TransportOutbox<TPayload> {
   }
 
   private async persistSafe() {
-    try {
-      await this.persist();
-    } catch (error) {
-      if (this.closed) {
-        return;
+    const run = async () => {
+      try {
+        await this.persist();
+      } catch (error) {
+        if (this.closed) {
+          return;
+        }
+        this.logger.warn('transport outbox persist failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
-      this.logger.warn('transport outbox persist failed', {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
+    };
+
+    this.persistChain = this.persistChain.then(run, run);
+    return this.persistChain;
   }
 
   private async cleanupCompletedRecords(nowMs: number) {
