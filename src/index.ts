@@ -192,7 +192,7 @@ const run = async () => {
     sentry?.stop();
     bridge.stop();
     await taskOrchestrator.stop();
-    control.stop();
+    await control.stop();
     for (const handle of runtimeHandles) {
       await Promise.resolve(handle.close());
     }

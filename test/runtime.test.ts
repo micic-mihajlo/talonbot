@@ -132,7 +132,7 @@ describe('HTTP control runtime', () => {
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-    controlPlane.stop();
+    await controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -271,7 +271,7 @@ describe('socket control runtime', () => {
 
   afterEach(async () => {
     await socketServer.close();
-    controlPlane.stop();
+    await controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -371,7 +371,7 @@ describe('socket control startup hardening', () => {
   });
 
   afterEach(async () => {
-    controlPlane.stop();
+    await controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -436,7 +436,7 @@ describe('HTTP control auth gating', () => {
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-    controlPlane.stop();
+    await controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 

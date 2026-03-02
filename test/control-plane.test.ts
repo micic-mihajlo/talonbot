@@ -66,7 +66,7 @@ describe('control plane alias behavior', () => {
   });
 
   afterEach(async () => {
-    controlPlane?.stop();
+    await controlPlane?.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -166,7 +166,7 @@ describe('control plane rpc behavior', () => {
   });
 
   afterEach(async () => {
-    controlPlane?.stop();
+    await controlPlane?.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
@@ -293,7 +293,7 @@ describe('control plane task-first dispatch', () => {
   });
 
   afterEach(async () => {
-    controlPlane?.stop();
+    await controlPlane?.stop();
     await rm(workingDirectory, { recursive: true, force: true });
   });
 

@@ -124,7 +124,7 @@ describe('release HTTP endpoints', () => {
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-    controlPlane.stop();
+    await controlPlane.stop();
     await rm(sandbox, { recursive: true, force: true });
   });
 
