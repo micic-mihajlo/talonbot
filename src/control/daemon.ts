@@ -1017,6 +1017,10 @@ export class ControlPlane {
       return false;
     }
 
+    if (modeOverride === 'task') {
+      return true;
+    }
+
     if (effectiveMode === 'hybrid') {
       return modeOverride === 'task';
     }
