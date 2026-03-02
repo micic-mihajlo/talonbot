@@ -1,9 +1,12 @@
 import type { InboundMessage } from '../shared/protocol.js';
 
-const normalizeThread = (threadId: string | undefined | null) => (threadId || 'main').trim() || 'main';
-
-export const inboundDedupeKey = (message: InboundMessage) =>
-  `${message.source}:${message.sourceChannelId}:${normalizeThread(message.sourceThreadId)}:${message.sourceMessageId || message.id}`;
+export const inboundDedupeKey = (message: InboundMessage) => {
+  const sourceMessageId = (message.sourceMessageId || '').trim();
+  if (sourceMessageId) {
+    return `${message.source}:${sourceMessageId}`;
+  }
+  return `${message.source}:${message.sourceChannelId}:${message.id}`;
+};
 
 export class EventDedupeGuard {
   private readonly seen = new Map<string, number>();

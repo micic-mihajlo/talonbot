@@ -261,13 +261,22 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     }
   }
 
-  if (config.SLACK_ENABLED && (!config.SLACK_BOT_TOKEN || !config.SLACK_APP_TOKEN || !config.SLACK_SIGNING_SECRET)) {
+  const slackNeedsAppToken =
+    config.CHAT_TRANSPORT_PROVIDER === 'legacy' || config.CHAT_TRANSPORT_PROVIDER === 'dual';
+  if (
+    config.SLACK_ENABLED &&
+    (!config.SLACK_BOT_TOKEN || !config.SLACK_SIGNING_SECRET || (slackNeedsAppToken && !config.SLACK_APP_TOKEN))
+  ) {
     issues.push(
       issue({
         severity: 'error',
         area: 'transports',
-        message: 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.',
-        remediation: 'Set the three Slack secrets in .env, or disable Slack with SLACK_ENABLED=false.',
+        message: slackNeedsAppToken
+          ? 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.'
+          : 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in chat-sdk mode.',
+        remediation: slackNeedsAppToken
+          ? 'Set the three Slack secrets in .env, or disable Slack with SLACK_ENABLED=false.'
+          : 'Set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in .env, or disable Slack with SLACK_ENABLED=false.',
         code: 'slack_missing_secrets',
       }),
     );

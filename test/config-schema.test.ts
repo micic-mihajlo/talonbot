@@ -56,4 +56,36 @@ describe('config schema', () => {
       /CHAT_SDK_REDIS_URL/,
     );
   });
+
+  it('allows slack chat-sdk mode without SLACK_APP_TOKEN', () => {
+    const parsed = parseAppConfig(
+      {
+        CHAT_TRANSPORT_PROVIDER: 'chat_sdk',
+        CHAT_SDK_REDIS_URL: 'redis://127.0.0.1:6379/0',
+        SLACK_ENABLED: 'true',
+        SLACK_BOT_TOKEN: 'xoxb-token',
+        SLACK_SIGNING_SECRET: 'secret',
+        SLACK_APP_TOKEN: '',
+      } as NodeJS.ProcessEnv,
+      {},
+    );
+    expect(parsed.SLACK_ENABLED).toBe(true);
+    expect(parsed.CHAT_TRANSPORT_PROVIDER).toBe('chat_sdk');
+  });
+
+  it('requires SLACK_APP_TOKEN in dual mode', () => {
+    expect(() =>
+      parseAppConfig(
+        {
+          CHAT_TRANSPORT_PROVIDER: 'dual',
+          CHAT_SDK_REDIS_URL: 'redis://127.0.0.1:6379/0',
+          SLACK_ENABLED: 'true',
+          SLACK_BOT_TOKEN: 'xoxb-token',
+          SLACK_SIGNING_SECRET: 'secret',
+          SLACK_APP_TOKEN: '',
+        } as NodeJS.ProcessEnv,
+        {},
+      ),
+    ).toThrow(/SLACK_APP_TOKEN/);
+  });
 });

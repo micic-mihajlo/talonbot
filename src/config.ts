@@ -142,11 +142,18 @@ export const appConfigSchema = schemaBase.superRefine((input, ctx) => {
     });
   }
 
-  if (input.SLACK_ENABLED && (!input.SLACK_BOT_TOKEN || !input.SLACK_APP_TOKEN || !input.SLACK_SIGNING_SECRET)) {
+  const slackNeedsAppToken =
+    input.CHAT_TRANSPORT_PROVIDER === 'legacy' || input.CHAT_TRANSPORT_PROVIDER === 'dual';
+  if (
+    input.SLACK_ENABLED &&
+    (!input.SLACK_BOT_TOKEN || !input.SLACK_SIGNING_SECRET || (slackNeedsAppToken && !input.SLACK_APP_TOKEN))
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['SLACK_ENABLED'],
-      message: 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.',
+      message: slackNeedsAppToken
+        ? 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.'
+        : 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in chat-sdk mode.',
     });
   }
 
