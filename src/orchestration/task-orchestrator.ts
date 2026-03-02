@@ -22,6 +22,7 @@ import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
 import { verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
+import { inferRequiresVerifiedPr } from './task-intent.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -1305,17 +1306,7 @@ export class TaskOrchestrator {
       return task.requiresVerifiedPr;
     }
 
-    const explicitPrIntent = /\b(?:open|create|submit|raise|file)\s+(?:a\s+)?(?:pr|pull request)\b/i.test(task.text);
-    if (explicitPrIntent) {
-      return true;
-    }
-
-    const implementationIntent = /\b(?:implement|implementing|build|create|add|modify|update|patch|refactor|remove|delete|deploy|setup|configure|wire|harden|migrate)\b/i.test(task.text);
-    if (!implementationIntent) {
-      return false;
-    }
-
-    return !/\b(?:research|review|summarize|inspect|analyze|analysis|status|question)\b/i.test(task.text);
+    return inferRequiresVerifiedPr(task.text);
   }
 
   private normalizeArtifact(raw: unknown): TaskArtifact | null {
