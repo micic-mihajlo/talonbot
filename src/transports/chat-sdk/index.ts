@@ -76,6 +76,9 @@ export class ChatSdkTransport implements ChatTransport {
       message,
       {
         reply: async (text) => {
+          if (message.source !== 'slack' && message.source !== 'discord') {
+            return;
+          }
           await this.enqueueOutbound(message.source, {
             channelId: message.sourceChannelId,
             threadId: thread.threadId,
