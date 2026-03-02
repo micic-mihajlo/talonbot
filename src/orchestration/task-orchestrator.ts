@@ -1445,6 +1445,13 @@ export class TaskOrchestrator {
     }
 
     const primaryArtifact = legacyArtifact || normalizedArtifacts[normalizedArtifacts.length - 1];
+    const inferredTaskIntent = inferTaskIntent(typeof raw.text === 'string' ? raw.text : '');
+    const requiresVerifiedPr =
+      typeof raw.requiresVerifiedPr === 'boolean'
+        ? raw.requiresVerifiedPr
+        : inferredTaskIntent === 'implementation'
+          ? this.config.CHAT_REQUIRE_VERIFIED_PR
+          : false;
 
     return {
       id: raw.id,
@@ -1453,11 +1460,11 @@ export class TaskOrchestrator {
       source: raw.source === 'transport' || raw.source === 'webhook' || raw.source === 'operator' || raw.source === 'system' ? raw.source : 'operator',
       text: typeof raw.text === 'string' ? raw.text : '',
       repoId: typeof raw.repoId === 'string' ? raw.repoId : '',
-      taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferTaskIntent(typeof raw.text === 'string' ? raw.text : ''),
-      requiresVerifiedPr: typeof raw.requiresVerifiedPr === 'boolean' ? raw.requiresVerifiedPr : inferTaskIntent(typeof raw.text === 'string' ? raw.text : '') === 'implementation' ? this.config.CHAT_REQUIRE_VERIFIED_PR : false,
+      taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferredTaskIntent,
+      requiresVerifiedPr,
       requiredArtifacts:
         normalizeArtifactKinds(Array.isArray(raw.requiredArtifacts) ? raw.requiredArtifacts : undefined) ||
-        (typeof raw.requiresVerifiedPr === 'boolean' && raw.requiresVerifiedPr ? ['pr'] : ['summary']),
+        (requiresVerifiedPr ? ['pr'] : ['summary']),
       status,
       state: status,
       assignedSession,

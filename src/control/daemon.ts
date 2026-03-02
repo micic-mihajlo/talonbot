@@ -208,12 +208,21 @@ const normalizePolicyMetadata = (metadata: Record<string, string> | undefined): 
 
 const coerceTaskPolicyHint = (hint: TaskPolicyHintInput | undefined): TaskPolicyHintInput => {
   if (!hint) return {};
-  return {
-    taskIntent: hint.taskIntent,
-    requiresVerifiedPr: hint.requiresVerifiedPr,
-    requirePrOverride: hint.requirePrOverride,
-    requiredArtifacts: normalizeTaskArtifactKinds(hint.requiredArtifacts),
-  };
+  const result: TaskPolicyHintInput = {};
+  if (hint.taskIntent) {
+    result.taskIntent = hint.taskIntent;
+  }
+  if (typeof hint.requiresVerifiedPr === 'boolean') {
+    result.requiresVerifiedPr = hint.requiresVerifiedPr;
+  }
+  if (typeof hint.requirePrOverride === 'boolean') {
+    result.requirePrOverride = hint.requirePrOverride;
+  }
+  const normalizedArtifacts = normalizeTaskArtifactKinds(hint.requiredArtifacts);
+  if (normalizedArtifacts) {
+    result.requiredArtifacts = normalizedArtifacts;
+  }
+  return result;
 };
 
 const resolveTaskPolicy = (input: {
