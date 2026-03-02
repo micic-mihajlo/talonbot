@@ -140,12 +140,15 @@ describe('release snapshot + integrity', () => {
 
 describe('task orchestration flow', () => {
   let sandbox = '';
+  let orchestrator: TaskOrchestrator | null = null;
 
   beforeEach(async () => {
     sandbox = await mkdtemp(path.join(tmpdir(), 'talon-orch-'));
   });
 
   afterEach(async () => {
+    await orchestrator?.stop();
+    orchestrator = null;
     await rm(sandbox, { recursive: true, force: true });
   });
 
@@ -176,7 +179,7 @@ describe('task orchestration flow', () => {
       STARTUP_INTEGRITY_MODE: 'warn',
     };
 
-    const orchestrator = new TaskOrchestrator(config);
+    orchestrator = new TaskOrchestrator(config);
     await orchestrator.initialize();
 
     await orchestrator.registerRepo({
