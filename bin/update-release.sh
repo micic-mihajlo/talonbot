@@ -112,6 +112,7 @@ JSON
 fi
 
 old_current="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+old_previous="$(readlink -f "$PREVIOUS_LINK" 2>/dev/null || true)"
 ln -sfn "$release_dir" "$CURRENT_LINK.next"
 mv -Tf "$CURRENT_LINK.next" "$CURRENT_LINK"
 
@@ -157,6 +158,10 @@ if ! healthcheck; then
   if [ -n "$old_current" ] && [ -d "$old_current" ]; then
     ln -sfn "$old_current" "$CURRENT_LINK.next"
     mv -Tf "$CURRENT_LINK.next" "$CURRENT_LINK"
+    if [ -n "$old_previous" ] && [ -d "$old_previous" ]; then
+      ln -sfn "$old_previous" "$PREVIOUS_LINK.next"
+      mv -Tf "$PREVIOUS_LINK.next" "$PREVIOUS_LINK"
+    fi
     restart_service || true
     echo "rolled back to previous release: $old_current"
   fi
