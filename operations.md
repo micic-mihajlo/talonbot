@@ -128,3 +128,27 @@ Transport outbox remediation:
 ```bash
 npm run cli -- uninstall --force
 ```
+
+## Strict host and release runbook
+
+```bash
+# Host setup (root required)
+sudo talonbot setup --admin-user <admin-user> --runtime-user talonbot
+
+# Install daemon + strict checks
+talonbot install --daemon --doctor
+
+# Publish immutable release from source
+talonbot update --source /path/to/talonbot
+
+# Roll back if post-activation health fails
+talonbot rollback previous
+```
+
+Incident policy:
+
+- if update health verification fails, release activation reverts automatically.
+- use `talonbot rollback <sha|previous>` for manual recovery.
+- collect diagnostics with `talonbot bundle --output /tmp`.
+
+Note: `setup`, `update`, and `rollback` mutate system paths (`/opt`, `/etc`, systemd) and should be run with `sudo`.

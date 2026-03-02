@@ -275,7 +275,8 @@ const printText = (issues: StartupIssue[]) => {
 
   for (const issue of issues) {
     const tag = issue.severity === 'error' ? '[ERROR]' : '[WARN]';
-    process.stdout.write(`${tag} [${issue.area}] ${formatStartupIssue(issue)}\n`);
+    const code = issue.code ? ` (${issue.code})` : '';
+    process.stdout.write(`${tag} [${issue.area}]${code} ${formatStartupIssue(issue)}\n`);
   }
 };
 
@@ -306,6 +307,9 @@ const run = async () => {
     process.stdout.write('\n');
   } else {
     printText(issues);
+    if (args.strict && hasWarning && !hasError) {
+      process.stdout.write('doctor: strict mode treats warnings as failures.\n');
+    }
     process.stdout.write(
       `doctor: ${shouldFail ? 'failed' : 'passed'} (${issues.filter((issue) => issue.severity === 'error').length} errors, ${issues.filter((issue) => issue.severity === 'warn').length} warnings)\n`,
     );

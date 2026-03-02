@@ -39,3 +39,18 @@
 - worker failures are retried and escalate after retry budget exhaustion.
 - bridge dispatch failures are persisted and retried with backoff.
 - release activation fails closed when manifest verification does not pass.
+
+## Strict runtime and release layout
+
+Daemon deployments run from immutable releases:
+
+```text
+/opt/talonbot/
+  releases/<sha>/
+  current -> releases/<sha>
+  previous -> releases/<sha>
+/etc/talonbot/talonbot.env
+/var/lib/talonbot/
+```
+
+`start.sh` executes from `current`, applies security preflight, verifies manifest integrity, and only then launches `dist/index.js`.

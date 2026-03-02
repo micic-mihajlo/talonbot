@@ -23,6 +23,9 @@ WORKTREE_ROOT_DIR="$WORKTREE_ROOT_DIR" \
 REPO_ROOT_DIR="$REPO_ROOT_DIR" \
 RELEASE_ROOT_DIR="$RELEASE_ROOT_DIR" \
 ENGINE_MODE=mock \
+STARTUP_INTEGRITY_MODE=warn \
+CHAT_DISPATCH_MODE=session \
+RUNTIME_EXPECTED_USER="${USER:-$(id -un)}" \
 DISCORD_ENABLED=false \
 SLACK_ENABLED=false \
 node dist/index.js > "$RUNTIME_LOG" 2>&1 &
@@ -66,6 +69,9 @@ curl -sS \
   "http://127.0.0.1:${PORT}/dispatch" >/dev/null
 
 ENGINE_MODE=mock \
+STARTUP_INTEGRITY_MODE=warn \
+CHAT_DISPATCH_MODE=session \
+RUNTIME_EXPECTED_USER="${USER:-$(id -un)}" \
 DISCORD_ENABLED=true \
 DISCORD_TOKEN=ci-discord-token-placeholder \
 CONTROL_AUTH_TOKEN="$TOKEN" \

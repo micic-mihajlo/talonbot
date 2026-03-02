@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { AppConfig } from '../config.js';
@@ -65,6 +66,7 @@ export const formatStartupIssue = (input: StartupIssue) => {
 
 export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   const issues: StartupIssue[] = [];
+  const strict = config.STARTUP_INTEGRITY_MODE === 'strict';
 
   const expandedDataDir = expandPath(config.DATA_DIR);
   const expandedSocketPath = expandPath(config.CONTROL_SOCKET_PATH);
@@ -183,7 +185,6 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   }
 
   if (config.CHAT_REQUIRE_VERIFIED_PR && !commandExists('gh')) {
-    const strict = config.STARTUP_INTEGRITY_MODE === 'strict';
     issues.push(
       issue({
         severity: strict ? 'error' : 'warn',
@@ -207,7 +208,6 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     }
 
     if (!hasRepo) {
-      const strict = config.STARTUP_INTEGRITY_MODE === 'strict';
       issues.push(
         issue({
           severity: strict ? 'error' : 'warn',
@@ -347,14 +347,39 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     }
   }
 
+  const expectedUser = config.RUNTIME_EXPECTED_USER.trim();
+  if (expectedUser) {
+    let actualUser = process.env.USER || process.env.LOGNAME || '';
+    if (!actualUser) {
+      try {
+        actualUser = os.userInfo().username;
+      } catch {
+        actualUser = '';
+      }
+    }
+
+    if (actualUser && actualUser !== expectedUser) {
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'runtime',
+          message: `Runtime user mismatch. Expected "${expectedUser}" but running as "${actualUser}".`,
+          remediation:
+            `Run talonbot under user "${expectedUser}" (systemd User=${expectedUser}) or set RUNTIME_EXPECTED_USER=${actualUser} for local development.`,
+          code: 'runtime_user_mismatch',
+        }),
+      );
+    }
+  }
+
   if (process.getuid?.() === 0) {
     issues.push(
       issue({
-        severity: 'warn',
+        severity: strict ? 'error' : 'warn',
         area: 'runtime',
         message: 'Running as root; prefer a dedicated non-root user.',
         remediation: 'Set SERVICE_USER to a non-root account and reinstall daemon mode, or run without sudo in local mode.',
-        code: 'running_as_root',
+        code: strict ? 'running_as_root_strict' : 'running_as_root',
       }),
     );
   }

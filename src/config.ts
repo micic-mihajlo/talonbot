@@ -58,6 +58,9 @@ const schemaBase = z.object({
   REPO_ROOT_DIR: z.string().default('~/workspace'),
   WORKTREE_ROOT_DIR: z.string().default('~/workspace/worktrees'),
   RELEASE_ROOT_DIR: z.string().default('~/.local/share/talonbot/releases'),
+  RUNTIME_EXPECTED_USER: z.string().default('talonbot'),
+  RELEASE_HEALTHCHECK_URL: z.string().default(''),
+  RELEASE_HEALTHCHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(10 * 60 * 1000).default(45000),
   TASK_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(3),
   WORKER_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(2),
   WORKTREE_STALE_HOURS: z.coerce.number().int().min(1).max(24 * 365).default(24),
@@ -68,7 +71,7 @@ const schemaBase = z.object({
   TASK_AUTOCLEANUP: bool.default(true),
   TASK_AUTO_COMMIT: bool.default(false),
   TASK_AUTO_PR: bool.default(false),
-  STARTUP_INTEGRITY_MODE: z.enum(['off', 'warn', 'strict']).default('warn'),
+  STARTUP_INTEGRITY_MODE: z.enum(['off', 'warn', 'strict']).default('strict'),
   SESSION_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   ENABLE_WEBHOOK_BRIDGE: bool.default(true),
   BRIDGE_SHARED_SECRET: z.string().default(''),
@@ -231,8 +234,12 @@ export const parseAppConfig = (
   }
 
   const parsed = parseSchema(env);
+  const releaseHealthcheckUrl =
+    parsed.RELEASE_HEALTHCHECK_URL.trim() ||
+    `http://127.0.0.1:${parsed.CONTROL_HTTP_PORT > 0 ? parsed.CONTROL_HTTP_PORT : 8080}/health`;
   return {
     ...parsed,
+    RELEASE_HEALTHCHECK_URL: releaseHealthcheckUrl,
     SLACK_ALLOWED_CHANNELS: strList(parsed.SLACK_ALLOWED_CHANNELS),
     SLACK_ALLOWED_CHANNEL_PREFIXES: strList(parsed.SLACK_ALLOWED_CHANNEL_PREFIXES),
     SLACK_ALLOWED_USERS: strList(parsed.SLACK_ALLOWED_USERS),
