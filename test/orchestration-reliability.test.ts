@@ -252,6 +252,58 @@ describe('task orchestration reliability upgrades', () => {
     expect(done?.requiresVerifiedPr).toBe(false);
   });
 
+  it('completes summary-only tasks even when worker reports blocked state with summary text', async () => {
+    const repoDir = path.join(sandbox, 'repo-summary-fallback');
+    await initGitRepo(repoDir);
+
+    const binDir = path.join(sandbox, 'bin-summary-fallback');
+    const engineScript = path.join(binDir, 'engine-blocked-summary.sh');
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      engineScript,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        `printf '%s\\n' '{"summary":"Review completed with recommendations.","state":"blocked"}'`,
+      ].join('\n'),
+      { encoding: 'utf8', mode: 0o755 },
+    );
+
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: true,
+        ENGINE_MODE: 'process',
+        ENGINE_COMMAND: engineScript,
+        ENGINE_ARGS: '',
+        TASK_AUTO_COMMIT: false,
+        TASK_AUTO_PR: false,
+      }),
+    );
+    await orchestrator.initialize();
+    await orchestrator.registerRepo({
+      id: 'repo-summary-fallback',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const task = await orchestrator.submitTask({
+      text: 'Review the architecture and summarize improvements.',
+      repoId: 'repo-summary-fallback',
+      source: 'transport',
+      taskIntent: 'review',
+      requiresVerifiedPr: false,
+      requiredArtifacts: ['summary'],
+    });
+
+    await waitFor(() => orchestrator?.getTask(task.id)?.status === 'done', 15000);
+    const done = orchestrator.getTask(task.id);
+    expect(done?.status).toBe('done');
+    expect(done?.error).toBeUndefined();
+    expect(done?.events.some((event) => event.kind === 'summary_fallback')).toBe(true);
+  });
+
   it(
     'accepts verified PR URLs for derived task branches (e.g. -v2)',
     async () => {
