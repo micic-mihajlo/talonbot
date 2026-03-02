@@ -1022,7 +1022,7 @@ export class ControlPlane {
     }
 
     if (effectiveMode === 'hybrid') {
-      return modeOverride === 'task';
+      return false;
     }
 
     const policy = resolveTaskPolicy({
