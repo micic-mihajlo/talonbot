@@ -184,6 +184,47 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     );
   }
 
+  const chatSdkProviderEnabled =
+    config.CHAT_TRANSPORT_PROVIDER === 'chat_sdk' || config.CHAT_TRANSPORT_PROVIDER === 'dual';
+  if (chatSdkProviderEnabled && !config.CHAT_SDK_REDIS_URL.trim()) {
+    issues.push(
+      issue({
+        severity: 'error',
+        area: 'transports',
+        message: 'CHAT_TRANSPORT_PROVIDER requires CHAT_SDK_REDIS_URL when chat-sdk transport is enabled.',
+        remediation: 'Set CHAT_SDK_REDIS_URL=redis://<host>:6379/<db> and restart talonbot.',
+        code: 'chat_sdk_redis_url_missing',
+      }),
+    );
+  }
+
+  if (chatSdkProviderEnabled && config.CHAT_SDK_REDIS_URL.trim()) {
+    try {
+      const parsed = new URL(config.CHAT_SDK_REDIS_URL);
+      if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:') {
+        issues.push(
+          issue({
+            severity: strict ? 'error' : 'warn',
+            area: 'transports',
+            message: `CHAT_SDK_REDIS_URL protocol must be redis:// or rediss:// (received ${parsed.protocol}).`,
+            remediation: 'Use a Redis URL like redis://localhost:6379/0 or rediss://host:6379/0.',
+            code: 'chat_sdk_redis_url_invalid_protocol',
+          }),
+        );
+      }
+    } catch {
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'transports',
+          message: 'CHAT_SDK_REDIS_URL is not a valid URL.',
+          remediation: 'Set CHAT_SDK_REDIS_URL=redis://<host>:6379/<db>.',
+          code: 'chat_sdk_redis_url_invalid',
+        }),
+      );
+    }
+  }
+
   if (config.CHAT_REQUIRE_VERIFIED_PR && !commandExists('gh')) {
     issues.push(
       issue({
@@ -220,13 +261,22 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     }
   }
 
-  if (config.SLACK_ENABLED && (!config.SLACK_BOT_TOKEN || !config.SLACK_APP_TOKEN || !config.SLACK_SIGNING_SECRET)) {
+  const slackNeedsAppToken =
+    config.CHAT_TRANSPORT_PROVIDER === 'legacy' || config.CHAT_TRANSPORT_PROVIDER === 'dual';
+  if (
+    config.SLACK_ENABLED &&
+    (!config.SLACK_BOT_TOKEN || !config.SLACK_SIGNING_SECRET || (slackNeedsAppToken && !config.SLACK_APP_TOKEN))
+  ) {
     issues.push(
       issue({
         severity: 'error',
         area: 'transports',
-        message: 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.',
-        remediation: 'Set the three Slack secrets in .env, or disable Slack with SLACK_ENABLED=false.',
+        message: slackNeedsAppToken
+          ? 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET.'
+          : 'SLACK_ENABLED=true requires SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in chat-sdk mode.',
+        remediation: slackNeedsAppToken
+          ? 'Set the three Slack secrets in .env, or disable Slack with SLACK_ENABLED=false.'
+          : 'Set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in .env, or disable Slack with SLACK_ENABLED=false.',
         code: 'slack_missing_secrets',
       }),
     );

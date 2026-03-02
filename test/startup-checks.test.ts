@@ -140,4 +140,51 @@ describe('startup validation', () => {
     expect(thrown).toBeInstanceOf(StartupValidationError);
     expect((thrown as StartupValidationError).issues.some((issue) => issue.code === 'missing_engine_command')).toBe(true);
   });
+
+  it('errors when chat-sdk provider is enabled without Redis URL', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      CHAT_TRANSPORT_PROVIDER: 'chat_sdk',
+      CHAT_SDK_REDIS_URL: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+    const issue = issues.find((entry) => entry.code === 'chat_sdk_redis_url_missing');
+    expect(issue?.severity).toBe('error');
+  });
+
+  it('does not require SLACK_APP_TOKEN in chat-sdk mode', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      CHAT_TRANSPORT_PROVIDER: 'chat_sdk',
+      CHAT_SDK_REDIS_URL: 'redis://127.0.0.1:6379/0',
+      SLACK_ENABLED: true,
+      SLACK_BOT_TOKEN: 'xoxb-token',
+      SLACK_SIGNING_SECRET: 'secret',
+      SLACK_APP_TOKEN: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+    const issue = issues.find((entry) => entry.code === 'slack_missing_secrets');
+    expect(issue).toBeUndefined();
+  });
+
+  it('requires SLACK_APP_TOKEN in dual mode', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      CHAT_TRANSPORT_PROVIDER: 'dual',
+      CHAT_SDK_REDIS_URL: 'redis://127.0.0.1:6379/0',
+      SLACK_ENABLED: true,
+      SLACK_BOT_TOKEN: 'xoxb-token',
+      SLACK_SIGNING_SECRET: 'secret',
+      SLACK_APP_TOKEN: '',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+    });
+    const issue = issues.find((entry) => entry.code === 'slack_missing_secrets');
+    expect(issue?.severity).toBe('error');
+  });
 });

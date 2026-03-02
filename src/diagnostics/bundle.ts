@@ -16,6 +16,7 @@ export const createDiagnosticsBundle = async (input: {
   release?: ReleaseManager;
   audit?: unknown;
   reconciliation?: unknown;
+  transportStatus?: unknown;
 }) => {
   const ts = new Date().toISOString().replace(/[.:]/g, '-');
   const bundleDir = path.join(input.outputDir, `talonbot-diagnostics-${ts}`);
@@ -33,6 +34,7 @@ export const createDiagnosticsBundle = async (input: {
       httpPort: input.config.CONTROL_HTTP_PORT,
       slack: input.config.SLACK_ENABLED,
       discord: input.config.DISCORD_ENABLED,
+      transportProvider: input.config.CHAT_TRANSPORT_PROVIDER,
       taskConcurrency: input.config.TASK_MAX_CONCURRENCY,
     },
   };
@@ -45,9 +47,17 @@ export const createDiagnosticsBundle = async (input: {
   const outboxSnapshots = {
     discord: await fs.readFile(`${outboxStateBase}.discord`, 'utf8').catch(() => ''),
     slack: await fs.readFile(`${outboxStateBase}.slack`, 'utf8').catch(() => ''),
+    chatSdkDiscord: await fs.readFile(`${outboxStateBase}.chat-sdk.discord`, 'utf8').catch(() => ''),
+    chatSdkSlack: await fs.readFile(`${outboxStateBase}.chat-sdk.slack`, 'utf8').catch(() => ''),
   };
   await fs.writeFile(path.join(bundleDir, 'transport-outbox.discord.json'), outboxSnapshots.discord || 'null', { encoding: 'utf8' });
   await fs.writeFile(path.join(bundleDir, 'transport-outbox.slack.json'), outboxSnapshots.slack || 'null', { encoding: 'utf8' });
+  await fs.writeFile(path.join(bundleDir, 'transport-outbox.chat-sdk.discord.json'), outboxSnapshots.chatSdkDiscord || 'null', {
+    encoding: 'utf8',
+  });
+  await fs.writeFile(path.join(bundleDir, 'transport-outbox.chat-sdk.slack.json'), outboxSnapshots.chatSdkSlack || 'null', {
+    encoding: 'utf8',
+  });
 
   if (input.tasks) {
     await fs.writeFile(path.join(bundleDir, 'tasks.json'), safeJson(input.tasks.listTasks()), { encoding: 'utf8' });
@@ -68,6 +78,10 @@ export const createDiagnosticsBundle = async (input: {
 
   if (input.reconciliation) {
     await fs.writeFile(path.join(bundleDir, 'startup-reconciliation.json'), safeJson(input.reconciliation), { encoding: 'utf8' });
+  }
+
+  if (input.transportStatus) {
+    await fs.writeFile(path.join(bundleDir, 'transport-status.json'), safeJson(input.transportStatus), { encoding: 'utf8' });
   }
 
   return {

@@ -25,6 +25,11 @@
   - `session`: non-command messages go to conversational session engine.
   - `hybrid`: defaults to `session`; use `task: ...` / `/task ...` to force task dispatch.
 - `CHAT_REQUIRE_VERIFIED_PR` default: `true` (applies to `implementation` intent by default; other intents require summary unless explicitly overridden).
+- `CHAT_TRANSPORT_PROVIDER` values: `legacy|chat_sdk|dual` (default `legacy`)
+- `CHAT_SDK_REDIS_URL` required when provider is `chat_sdk` or `dual`
+- `CHAT_SDK_SHADOW_TRAFFIC` default: `true`
+- `CHAT_SDK_EVENT_DEDUPE_WINDOW_MS` default: `30000`
+- `CHAT_SDK_DISABLE_LEGACY_OUTBOUND` default: `false`
 - `taskIntent` metadata (dispatch-level) can be one of: `research|review|summarize|implementation|ops|unknown`.
 - `requiredArtifacts` metadata values are `summary`, `branch`, `commit`, `pr`.
 - `CHAT_TASK_UPDATE_POLL_MS` default: `4000` (fallback notifier reconciliation interval)
@@ -110,6 +115,16 @@ Notes:
 
 - `SLACK_ENABLED` / `DISCORD_ENABLED`
 - transport-specific token vars in `.env`
+- `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY` are required for Chat SDK Discord mode
+
+## Chat SDK mode requirements
+
+- `CHAT_TRANSPORT_PROVIDER=chat_sdk|dual` requires `CHAT_SDK_REDIS_URL`.
+- Discord in Chat SDK mode also requires `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY`.
+- Webhook routes:
+  - `POST /chat-sdk/webhooks/slack`
+  - `POST /chat-sdk/webhooks/discord`
+- `/status` and `/health` include provider mode and transport-stack health.
 
 ## Recommended production values
 

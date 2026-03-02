@@ -5,6 +5,8 @@ import { ControlPlane } from './control/index.js';
 import { createHttpServer } from './runtime/http.js';
 import { SlackTransport } from './transports/slack/index.js';
 import { DiscordTransport } from './transports/discord/index.js';
+import { ChatSdkTransport } from './transports/chat-sdk/index.js';
+import type { ChatTransport } from './transports/chat-interface.js';
 import { createSocketServer } from './runtime/socket.js';
 import {
   formatStartupIssue,
@@ -16,6 +18,7 @@ import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
 import { BridgeSupervisor } from './bridge/supervisor.js';
 import { ReleaseManager } from './ops/release-manager.js';
 import { SentryAgent } from './orchestration/sentry-agent.js';
+import { EventDedupeGuard } from './transports/event-dedupe.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 
@@ -138,20 +141,37 @@ const run = async () => {
     }
   }
 
-  const transports: { stop: () => Promise<void> }[] = [];
+  const transports: ChatTransport[] = [];
   const runtimeHandles: { close: () => void | Promise<void> }[] = [];
   runtimeHandles.push(socketServer);
+  const eventDedupe = new EventDedupeGuard(config.CHAT_SDK_EVENT_DEDUPE_WINDOW_MS);
+  const provider = config.CHAT_TRANSPORT_PROVIDER;
+  const useLegacy = provider === 'legacy' || provider === 'dual';
+  const useChatSdk = provider === 'chat_sdk' || provider === 'dual';
+  let chatSdkTransport: ChatSdkTransport | undefined;
 
-  const slack = new SlackTransport(config, control);
-  if (config.SLACK_ENABLED) {
-    await slack.start();
-    transports.push(slack);
+  if (useLegacy) {
+    const slack = new SlackTransport(config, control, eventDedupe);
+    if (config.SLACK_ENABLED) {
+      await slack.start();
+      transports.push(slack);
+    }
+
+    const discord = new DiscordTransport(config, control, eventDedupe);
+    if (config.DISCORD_ENABLED) {
+      await discord.start();
+      transports.push(discord);
+    }
   }
 
-  const discord = new DiscordTransport(config, control);
-  if (config.DISCORD_ENABLED) {
-    await discord.start();
-    transports.push(discord);
+  if (useChatSdk) {
+    chatSdkTransport = new ChatSdkTransport(config, control, {
+      registerOutboundSenders: !(provider === 'dual' && !config.CHAT_SDK_DISABLE_LEGACY_OUTBOUND),
+      shadowTrafficEnabled: provider === 'chat_sdk' || config.CHAT_SDK_SHADOW_TRAFFIC,
+      dedupeGuard: eventDedupe,
+    });
+    await chatSdkTransport.start();
+    transports.push(chatSdkTransport);
   }
 
   if (config.CONTROL_HTTP_PORT > 0) {
@@ -167,6 +187,15 @@ const run = async () => {
         sentry: sentry || undefined,
         diagnosticsOutputDir: path.join(config.DATA_DIR.replace('~', process.env.HOME || ''), 'diagnostics'),
         startupReconciliation,
+        chatSdkTransport,
+        transportStatus: () => ({
+          provider: config.CHAT_TRANSPORT_PROVIDER,
+          dedupe: eventDedupe.stats(),
+          stacks: transports.map((transport) => ({
+            name: transport.name(),
+            health: transport.health(),
+          })),
+        }),
       },
     );
     runtimeHandles.push({
@@ -185,7 +214,9 @@ const run = async () => {
     });
   }
 
-  logger.info(`talonbot started with ${transports.length} transport(s), sessions dir=${config.DATA_DIR}`);
+  logger.info(
+    `talonbot started with ${transports.length} transport stack(s), provider=${config.CHAT_TRANSPORT_PROVIDER}, sessions dir=${config.DATA_DIR}`,
+  );
 
   const shutdown = async () => {
     logger.info('shutdown signal received');

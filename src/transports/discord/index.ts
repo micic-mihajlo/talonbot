@@ -7,6 +7,7 @@ import { InboundMessage } from '../../shared/protocol.js';
 import { isAllowedDiscord } from '../guards.js';
 import { config as envConfig } from '../../config.js';
 import { TransportOutbox } from '../outbox.js';
+import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
 
 const logger = createLogger('transports.discord', envConfig.LOG_LEVEL as any);
 
@@ -39,8 +40,13 @@ const startTypingHeartbeat = (channel: { sendTyping?: () => Promise<unknown> }, 
 export class DiscordTransport {
   private client?: Client;
   private outbox?: TransportOutbox<{ channelId: string; threadId?: string; text: string }>;
+  private started = false;
 
-  constructor(private readonly config: AppConfig, private readonly control: ControlPlane) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly control: ControlPlane,
+    private readonly dedupeGuard?: EventDedupeGuard,
+  ) {}
 
   private outboxKey(prefix: string, input: { channelId: string; threadId?: string; text: string }) {
     const hash = crypto.createHash('sha1').update(input.text).digest('hex');
@@ -175,6 +181,10 @@ export class DiscordTransport {
       };
 
       if (!inbound.text) return;
+      if (this.dedupeGuard && !this.dedupeGuard.shouldAccept(inboundDedupeKey(inbound))) {
+        logger.debug(`Discord duplicate event dropped channel=${channelId} message=${message.id}`);
+        return;
+      }
 
       if (this.config.DISCORD_REACTIONS_ENABLED) {
         try {
@@ -220,6 +230,7 @@ export class DiscordTransport {
     });
 
     await this.client.login(this.config.DISCORD_TOKEN);
+    this.started = true;
     logger.info('Discord transport connected');
   }
 
@@ -229,6 +240,21 @@ export class DiscordTransport {
     this.outbox = undefined;
     if (!this.client) return;
     await this.client.destroy();
+    this.started = false;
     logger.info('Discord transport stopped');
+  }
+
+  name() {
+    return 'legacy-discord';
+  }
+
+  health() {
+    return {
+      healthy: this.started,
+      started: this.started,
+      details: {
+        userId: this.client?.user?.id || null,
+      },
+    };
   }
 }

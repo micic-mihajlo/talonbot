@@ -7,6 +7,7 @@ import { InboundMessage } from '../../shared/protocol.js';
 import { isAllowedSlack } from '../guards.js';
 import { config as envConfig } from '../../config.js';
 import { TransportOutbox } from '../outbox.js';
+import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
 
 const logger = createLogger('transports.slack', envConfig.LOG_LEVEL as any);
 
@@ -14,8 +15,13 @@ export class SlackTransport {
   private app?: App;
   private botUserId?: string;
   private outbox?: TransportOutbox<{ channelId: string; threadId?: string; text: string }>;
+  private started = false;
 
-  constructor(private readonly config: AppConfig, private readonly control: ControlPlane) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly control: ControlPlane,
+    private readonly dedupeGuard?: EventDedupeGuard,
+  ) {}
 
   private outboxKey(prefix: string, input: { channelId: string; threadId?: string; text: string }) {
     const hash = crypto.createHash('sha1').update(input.text).digest('hex');
@@ -157,6 +163,10 @@ export class SlackTransport {
 
       if (!finalText) return;
       inbound.text = finalText;
+      if (this.dedupeGuard && !this.dedupeGuard.shouldAccept(inboundDedupeKey(inbound))) {
+        logger.debug(`Slack duplicate event dropped source=${message.channel} thread=${thread || 'main'} ts=${message.ts}`);
+        return;
+      }
 
       await this.control.dispatch(inbound, {
         reply: async (text) => {
@@ -174,6 +184,7 @@ export class SlackTransport {
     await this.app.start();
     const response = await this.app.client.auth.test();
     this.botUserId = response.user_id || '';
+    this.started = true;
     logger.info(`Slack transport started as bot=${this.botUserId}`);
   }
 
@@ -183,6 +194,21 @@ export class SlackTransport {
     this.outbox = undefined;
     if (!this.app) return;
     await this.app.stop();
+    this.started = false;
     logger.info('Slack transport stopped');
+  }
+
+  name() {
+    return 'legacy-slack';
+  }
+
+  health() {
+    return {
+      healthy: this.started,
+      started: this.started,
+      details: {
+        botUserId: this.botUserId || null,
+      },
+    };
   }
 }
