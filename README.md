@@ -2,6 +2,8 @@
 
 `talonbot` is a Linux-first, always-on software-engineer agent runner with:
 
+> Note: This README includes quickstart and operator references for fast setup.
+
 - Slack ingress (Socket Mode)
 - Discord ingress
 - Per-route session queues and persistent context
