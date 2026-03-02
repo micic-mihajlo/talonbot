@@ -319,4 +319,14 @@ talonbot rollback previous
 
 The `e2e-process` workflow is required and runs on self-hosted labels `self-hosted,linux,pi`.
 
+## Latest main branch highlights
+
+Recent main commits focused on release safety and process-e2e stability:
+
+1. Release rollback now restores the previous `/opt/talonbot/current` symlink if post-switch health checks fail (`bin/update-release.sh`).
+2. Process e2e disables `actions/setup-node` caching on the self-hosted lane to avoid stale cache behavior.
+3. Blocked-task e2e now verifies the terminal report artifact path for blocked outcomes.
+4. Runtime state in process e2e is isolated per workflow run to prevent cross-run interference.
+5. Blocked-state assertions were made deterministic to reduce flaky CI outcomes.
+
 Note: on hardened VPS installs, `setup`, `update`, and `rollback` are privileged operations and should be run with `sudo`.
