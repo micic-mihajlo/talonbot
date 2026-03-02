@@ -802,6 +802,26 @@ export class ControlPlane {
     return { text: trimmed };
   }
 
+  private shouldRequireVerifiedPr(text: string) {
+    if (!text.trim()) {
+      return false;
+    }
+
+    const explicitPrIntent = /\b(?:open|create|submit|raise|file)\s+(?:a\s+)?(?:pr|pull request)\b/i.test(text);
+    if (explicitPrIntent) {
+      return true;
+    }
+
+    const implementationIntent = /\b(?:implement|implementing|build|create|add|modify|update|patch|refactor|remove|delete|deploy|setup|configure|wire|harden|migrate)\b/i.test(
+      text,
+    );
+    if (!implementationIntent) {
+      return false;
+    }
+
+    return !/\b(?:research|review|summarize|inspect|analyze|analysis|status|question)\b/i.test(text);
+  }
+
   private shouldDispatchTaskFlow(modeOverride?: 'session' | 'task') {
     if (!this.tasks) {
       return false;
@@ -839,6 +859,7 @@ export class ControlPlane {
         text,
         sessionKey,
         source: 'transport',
+        requiresVerifiedPr: this.shouldRequireVerifiedPr(text),
       });
 
       await this.trackTaskBinding(task.id, sessionKey, message);

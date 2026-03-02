@@ -474,6 +474,7 @@ export const createHttpServer = (
           sessionKey?: string;
           source?: 'transport' | 'webhook' | 'operator' | 'system';
           fanout?: string[];
+          requiresVerifiedPr?: boolean;
         };
 
         if (!body.text || !body.text.trim()) {
@@ -487,6 +488,7 @@ export const createHttpServer = (
           sessionKey: body.sessionKey,
           source: body.source,
           fanout: body.fanout,
+          requiresVerifiedPr: body.requiresVerifiedPr,
         });
 
         writeJson(res, 200, { task });

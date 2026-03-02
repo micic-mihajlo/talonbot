@@ -355,6 +355,7 @@ export class TaskOrchestrator {
       repoId: repo.id,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
+      requiresVerifiedPr: input.requiresVerifiedPr,
     });
 
     this.tasks.set(task.id, task);
@@ -435,6 +436,7 @@ export class TaskOrchestrator {
 
   private async submitFanout(input: SubmitTaskInput) {
     const fanout = input.fanout || [];
+    const requiresVerifiedPr = input.requiresVerifiedPr;
     const repo = this.resolveRepo(input.repoId);
 
     const parent = this.createTask({
@@ -444,6 +446,7 @@ export class TaskOrchestrator {
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
       status: 'blocked',
+      requiresVerifiedPr,
     });
 
     this.tasks.set(parent.id, parent);
@@ -456,6 +459,7 @@ export class TaskOrchestrator {
         repoId: repo.id,
         sessionKey: input.sessionKey,
         parentTaskId: parent.id,
+        requiresVerifiedPr,
       });
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
@@ -475,6 +479,7 @@ export class TaskOrchestrator {
     sessionKey?: string;
     parentTaskId?: string;
     status?: TaskStatus;
+    requiresVerifiedPr?: boolean;
   }): TaskRecord {
     const now = new Date().toISOString();
     const id = randomId('task');
@@ -486,6 +491,7 @@ export class TaskOrchestrator {
       parentTaskId: input.parentTaskId,
       sessionKey: input.sessionKey,
       source: input.source,
+      requiresVerifiedPr: input.requiresVerifiedPr,
       text: input.text,
       repoId: input.repoId,
       status,
@@ -735,7 +741,7 @@ export class TaskOrchestrator {
         }
       }
 
-      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport') {
+      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport' && this.shouldRequireVerifiedPr(task)) {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
         const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl) : false;
         if (!verified) {
@@ -1270,6 +1276,7 @@ export class TaskOrchestrator {
       branch: typeof raw.branch === 'string' ? raw.branch : typeof primaryArtifact?.branch === 'string' ? primaryArtifact.branch : undefined,
       retryCount: Number.isFinite(raw.retryCount) ? Number(raw.retryCount) : 0,
       maxRetries: Number.isFinite(raw.maxRetries) ? Number(raw.maxRetries) : this.config.WORKER_MAX_RETRIES,
+      requiresVerifiedPr: typeof raw.requiresVerifiedPr === 'boolean' ? raw.requiresVerifiedPr : undefined,
       escalationRequired: Boolean(raw.escalationRequired),
       error: typeof raw.error === 'string' ? raw.error : undefined,
       artifacts: normalizedArtifacts,
@@ -1291,6 +1298,24 @@ export class TaskOrchestrator {
             }))
         : [],
     };
+  }
+
+  private shouldRequireVerifiedPr(task: TaskRecord) {
+    if (typeof task.requiresVerifiedPr === 'boolean') {
+      return task.requiresVerifiedPr;
+    }
+
+    const explicitPrIntent = /\b(?:open|create|submit|raise|file)\s+(?:a\s+)?(?:pr|pull request)\b/i.test(task.text);
+    if (explicitPrIntent) {
+      return true;
+    }
+
+    const implementationIntent = /\b(?:implement|implementing|build|create|add|modify|update|patch|refactor|remove|delete|deploy|setup|configure|wire|harden|migrate)\b/i.test(task.text);
+    if (!implementationIntent) {
+      return false;
+    }
+
+    return !/\b(?:research|review|summarize|inspect|analyze|analysis|status|question)\b/i.test(task.text);
   }
 
   private normalizeArtifact(raw: unknown): TaskArtifact | null {

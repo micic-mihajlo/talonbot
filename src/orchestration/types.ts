@@ -39,6 +39,7 @@ export interface TaskRecord {
   parentTaskId?: string;
   sessionKey?: string;
   source: 'transport' | 'webhook' | 'operator' | 'system';
+  requiresVerifiedPr?: boolean;
   text: string;
   repoId: string;
   status: TaskStatus;
@@ -87,6 +88,7 @@ export interface SubmitTaskInput {
   source?: TaskRecord['source'];
   parentTaskId?: string;
   fanout?: string[];
+  requiresVerifiedPr?: boolean;
 }
 
 export interface WorktreeInfo {
