@@ -42,15 +42,18 @@ jobs:
       - name: Process mode e2e
         run: |
           set -euo pipefail
-          mkdir -p /tmp/talonbot-e2e-engine
+          RUNTIME_TMP="$(mktemp -d /tmp/talonbot-e2e-runtime.XXXXXX)"
+          mkdir -p "$RUNTIME_TMP/engine" "$RUNTIME_TMP/data" "$RUNTIME_TMP/worktrees"
 
           CONTROL_AUTH_TOKEN=e2e-process-control-token-abcdefghijklmnopqrstuvwxyz \
           CONTROL_HTTP_PORT=8092 \
           ENGINE_MODE=process \
           ENGINE_COMMAND="$PI_BIN" \
           ENGINE_ARGS='-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools' \
-          ENGINE_CWD=/tmp/talonbot-e2e-engine \
+          ENGINE_CWD="$RUNTIME_TMP/engine" \
           ENGINE_TIMEOUT_MS=300000 \
+          DATA_DIR="$RUNTIME_TMP/data" \
+          WORKTREE_ROOT_DIR="$RUNTIME_TMP/worktrees" \
           CHAT_DISPATCH_MODE=task \
           CHAT_REQUIRE_VERIFIED_PR=true \
           STARTUP_INTEGRITY_MODE=warn \
@@ -62,6 +65,7 @@ jobs:
           cleanup() {
             kill "$runtime_pid" 2>/dev/null || true
             wait "$runtime_pid" 2>/dev/null || true
+            rm -rf "$RUNTIME_TMP"
           }
           trap cleanup EXIT
 
