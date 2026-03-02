@@ -342,6 +342,100 @@ describe('task orchestration reliability upgrades', () => {
   },
     15000,
   );
+
+  it(
+    'discovers PR by branch metadata when worker output has no parseable PR URL',
+    async () => {
+      const repoDir = path.join(sandbox, 'repo-pr-discovery');
+      await initGitRepo(repoDir);
+
+      const binDir = path.join(sandbox, 'bin-discovery');
+      const engineScript = path.join(binDir, 'engine-no-pr.sh');
+      const ghScript = path.join(binDir, 'gh');
+      await mkdir(binDir, { recursive: true });
+      await writeFile(
+        engineScript,
+        [
+          '#!/usr/bin/env bash',
+          'set -euo pipefail',
+          'sleep 0.2',
+          `printf '%s\\n' '{"summary":"Implemented change and opened PR.","state":"done"}'`,
+        ].join('\n'),
+        { encoding: 'utf8', mode: 0o755 },
+      );
+      await writeFile(
+        ghScript,
+        [
+          '#!/usr/bin/env bash',
+          'set -euo pipefail',
+          'task_id="${TALON_TEST_TASK_ID:-}"',
+          'if [ -z "$task_id" ]; then',
+          '  echo "missing TALON_TEST_TASK_ID" >&2',
+          '  exit 1',
+          'fi',
+          'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then',
+          '  printf \'[{"url":"https://github.com/example/repo/pull/999","headRefName":"talon/%s-v3"}]\\n\' "$task_id"',
+          '  exit 0',
+          'fi',
+          'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then',
+          '  printf \'{"url":"%s","headRefName":"talon/%s-v3"}\\n\' "${3:-}" "$task_id"',
+          '  exit 0',
+          'fi',
+          'echo "unsupported gh invocation" >&2',
+          'exit 1',
+        ].join('\n'),
+        { encoding: 'utf8', mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH || '';
+      const originalTaskId = process.env.TALON_TEST_TASK_ID;
+      process.env.PATH = `${binDir}:${originalPath}`;
+      try {
+        orchestrator = new TaskOrchestrator(
+          buildConfig(sandbox, {
+            CHAT_REQUIRE_VERIFIED_PR: true,
+            ENGINE_MODE: 'process',
+            ENGINE_COMMAND: engineScript,
+            ENGINE_ARGS: '',
+            TASK_AUTO_COMMIT: false,
+            TASK_AUTO_PR: false,
+          }),
+        );
+        await orchestrator.initialize();
+        await orchestrator.registerRepo({
+          id: 'repo-pr-discovery',
+          path: repoDir,
+          defaultBranch: 'main',
+          remote: 'origin',
+          isDefault: true,
+        });
+
+        const task = await orchestrator.submitTask({
+          text: 'Implement change and open a PR.',
+          repoId: 'repo-pr-discovery',
+          source: 'transport',
+        });
+        process.env.TALON_TEST_TASK_ID = task.id;
+
+        await waitFor(() => {
+          const status = orchestrator?.getTask(task.id)?.status;
+          return status === 'done' || status === 'blocked' || status === 'failed' || status === 'cancelled';
+        }, 15000);
+        const done = orchestrator.getTask(task.id);
+        expect(done?.status).toBe('done');
+        const prArtifact = done?.artifacts.find((artifact) => artifact.kind === 'pull_request');
+        expect(prArtifact?.prUrl).toBe('https://github.com/example/repo/pull/999');
+      } finally {
+        process.env.PATH = originalPath;
+        if (typeof originalTaskId === 'string') {
+          process.env.TALON_TEST_TASK_ID = originalTaskId;
+        } else {
+          delete process.env.TALON_TEST_TASK_ID;
+        }
+      }
+    },
+    15000,
+  );
 });
 
 describe('worker launcher + health monitor', () => {
