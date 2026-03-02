@@ -53,3 +53,11 @@ For local parity, run `npm run ci:p0`.
 3. inspect bridge poison queue: `GET /bridge/status`
 4. inspect transport outbox poison records in diagnostics bundle
 5. inspect failed/blocked tasks and escalate owners
+
+## Strict deploy lifecycle
+
+1. Prepare host with `talonbot setup`.
+2. Publish immutable release with `talonbot update --source ...`.
+3. Restart and health-verify runtime.
+4. If verification fails, rollback immediately (`talonbot rollback previous`).
+5. Run `talonbot doctor -- --strict --runtime-url ...` before declaring production healthy.

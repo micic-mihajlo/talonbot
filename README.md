@@ -298,3 +298,25 @@ talonbot tasks list
 - Deploy or rollback fails:
   - Verify release state with `curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status`.
   - Inspect service logs: `journalctl -u talonbot.service -f`.
+
+## Strict Linux runtime profile
+
+Production profile now defaults to strict fail-closed startup checks.
+
+- `STARTUP_INTEGRITY_MODE=strict` is the default.
+- Runtime expects a dedicated user (`RUNTIME_EXPECTED_USER`, default `talonbot`).
+- Daemon mode runs from immutable releases under `/opt/talonbot/current`.
+- Health-verified release activation is handled by `bin/update-release.sh` and `bin/rollback-release.sh`.
+
+## Host setup and release operations
+
+```bash
+talonbot setup --admin-user <admin-user> --runtime-user talonbot
+talonbot install --daemon --doctor
+talonbot update --source /path/to/talonbot
+talonbot rollback previous
+```
+
+The `e2e-process` workflow is required and runs on self-hosted labels `self-hosted,linux,pi`.
+
+Note: on hardened VPS installs, `setup`, `update`, and `rollback` are privileged operations and should be run with `sudo`.

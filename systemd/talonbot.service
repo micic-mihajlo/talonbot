@@ -5,12 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=%i
-WorkingDirectory=/home/%i/talonbot
-EnvironmentFile=/home/%i/talonbot/.env
-ExecStartPre=/usr/bin/env bash /home/%i/talonbot/bin/harden-permissions.sh
-ExecStartPre=/usr/bin/env bash /home/%i/talonbot/bin/verify-manifest.sh
-ExecStart=/usr/bin/env node /home/%i/talonbot/dist/index.js
+User=talonbot
+Group=talonbot
+WorkingDirectory=/opt/talonbot/current
+EnvironmentFile=/etc/talonbot/talonbot.env
+ExecStartPre=/usr/bin/env bash /opt/talonbot/current/bin/harden-permissions.sh
+ExecStartPre=/usr/bin/env bash /opt/talonbot/current/bin/verify-manifest.sh
+ExecStart=/usr/bin/env bash /opt/talonbot/current/start.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=60
@@ -21,7 +22,7 @@ ProtectControlGroups=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/talonbot /home/%i/.local/share/talonbot /home/%i/workspace /home/%i/talonbot/.env
+ReadWritePaths=/var/lib/talonbot /opt/talonbot /etc/talonbot/talonbot.env %h/.local/share/talonbot %h/workspace
 
 [Install]
 WantedBy=multi-user.target

@@ -131,3 +131,15 @@ Notes:
 - retries use exponential backoff (`BRIDGE_RETRY_BASE_MS`, `BRIDGE_RETRY_MAX_MS`).
 - events exceeding `BRIDGE_MAX_RETRIES` move to `poison`.
 - duplicate message ids are marked `duplicate` and are not re-dispatched.
+
+## Strict runtime and release verification keys
+
+- `RUNTIME_EXPECTED_USER` default: `talonbot`
+- `RELEASE_HEALTHCHECK_URL` default: `http://127.0.0.1:${CONTROL_HTTP_PORT}/health` (resolved at runtime)
+- `RELEASE_HEALTHCHECK_TIMEOUT_MS` default: `45000`
+- `STARTUP_INTEGRITY_MODE` default: `strict`
+
+Operational effect:
+
+- strict mode treats runtime-user mismatch and root runtime as hard startup errors.
+- release update/rollback scripts use health verification before finalizing activation.

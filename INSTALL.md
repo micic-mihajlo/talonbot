@@ -139,3 +139,29 @@ If service setup fails:
 1. `npm run doctor -- --strict`
 2. `talonbot status --api`
 3. `sudo journalctl -u talonbot.service -f`
+
+## Strict daemon path (recommended)
+
+1. Run host setup once:
+```bash
+sudo talonbot setup --admin-user <admin-user> --runtime-user talonbot
+```
+2. Install daemon with strict profile:
+```bash
+talonbot install --daemon --doctor
+```
+3. Deploy or update immutable release snapshot:
+```bash
+talonbot update --source /path/to/talonbot
+```
+4. Roll back quickly if needed:
+```bash
+talonbot rollback previous
+```
+
+Runtime paths in daemon mode:
+
+- service unit: `/etc/systemd/system/talonbot.service`
+- env file: `/etc/talonbot/talonbot.env`
+- active release: `/opt/talonbot/current`
+- state/data: `/var/lib/talonbot`

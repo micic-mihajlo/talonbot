@@ -135,6 +135,34 @@ const runRepoScript = (scriptPath: string, extraArgs: string[] = [], extraEnv: R
   });
 };
 
+const resolveScriptCandidate = async (candidates: string[]) => {
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  return '';
+};
+
+const runResolvedScript = (absolutePath: string, extraArgs: string[] = [], extraEnv: Record<string, string> = {}) => {
+  execFileSync(absolutePath, extraArgs, {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      ...extraEnv,
+    },
+  });
+};
+
+const resolveRootScript = async (scriptName: string) =>
+  resolveScriptCandidate([path.join('/opt/talonbot/current', scriptName), path.join(process.cwd(), scriptName)]);
+
+const resolveOpsScript = async (scriptName: string) =>
+  resolveScriptCandidate([path.join('/opt/talonbot/current/bin', scriptName), path.join(process.cwd(), 'bin', scriptName)]);
+
 const envFilePath = () => process.env.TALONBOT_ENV_FILE || path.join(process.cwd(), '.env');
 
 const parseEnv = (raw: string) => {
@@ -367,6 +395,7 @@ const help = () => {
   process.stdout.write('talonbot CLI\n\n');
   process.stdout.write('Commands:\n');
   process.stdout.write('  install [--daemon] [--doctor] [--start] [--token <value>] [--generate-token]\n');
+  process.stdout.write('  setup --admin-user <user> [--runtime-user <user>] [--dry-run] [--experimental]\n');
   process.stdout.write('  start|stop|restart|status|logs\n');
   process.stdout.write('  status [--api|--service|--json]\n');
   process.stdout.write('  operator [summary|status] [--json]\n');
@@ -394,6 +423,26 @@ const main = async () => {
 
   if (command === 'install') {
     runRepoScript('install.sh', args);
+    return;
+  }
+
+  if (command === 'setup') {
+    const adminUser = getFlag(args, 'admin-user');
+    const runtimeUser = getFlag(args, 'runtime-user', 'talonbot');
+    if (!adminUser) {
+      fail('setup requires --admin-user <user>', 'Example: talonbot setup --admin-user ubuntu --runtime-user talonbot');
+    }
+
+    const setupScript = await resolveRootScript('setup.sh');
+    if (!setupScript) {
+      fail('setup.sh not found', 'Run from repository root or ensure /opt/talonbot/current/setup.sh exists.');
+    }
+
+    const forwarded: string[] = [];
+    if (hasFlag(args, '--dry-run')) forwarded.push('--dry-run');
+    if (hasFlag(args, '--experimental')) forwarded.push('--experimental');
+    forwarded.push('--runtime-user', runtimeUser, adminUser);
+    runResolvedScript(setupScript, forwarded);
     return;
   }
 
@@ -619,12 +668,25 @@ const main = async () => {
       fail(`deploy source directory does not exist: ${sourceDir}`, 'Pass --source <path> to a valid talonbot repository root.');
     }
 
+    const opsScript = await resolveOpsScript('update-release.sh');
+    if (opsScript) {
+      runResolvedScript(opsScript, ['--source', sourceDir]);
+      return;
+    }
+
     json(await request('POST', '/release/update', { sourceDir }));
     return;
   }
 
   if (command === 'rollback') {
-    json(await request('POST', '/release/rollback', { target: args[0] || 'previous' }));
+    const target = args[0] || 'previous';
+    const opsScript = await resolveOpsScript('rollback-release.sh');
+    if (opsScript) {
+      runResolvedScript(opsScript, ['--target', target]);
+      return;
+    }
+
+    json(await request('POST', '/release/rollback', { target }));
     return;
   }
 

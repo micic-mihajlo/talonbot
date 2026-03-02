@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   process-engine-e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, pi]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +29,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Resolve pi binary
+        run: |
+          set -euo pipefail
+          PI_BIN="$(command -v pi || true)"
+          if [ -z "$PI_BIN" ]; then
+            echo "pi not found on self-hosted runner"
+            exit 1
+          fi
+          echo "PI_BIN=$PI_BIN" >> "$GITHUB_ENV"
+
       - name: Process mode e2e
         run: |
           set -euo pipefail
@@ -37,12 +47,13 @@ jobs:
           CONTROL_AUTH_TOKEN=e2e-process-control-token-abcdefghijklmnopqrstuvwxyz \
           CONTROL_HTTP_PORT=8092 \
           ENGINE_MODE=process \
-          ENGINE_COMMAND=node \
-          ENGINE_ARGS="$PWD/scripts/ci/mock-process-engine.mjs" \
+          ENGINE_COMMAND="$PI_BIN" \
+          ENGINE_ARGS='-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools' \
           ENGINE_CWD=/tmp/talonbot-e2e-engine \
-          ENGINE_TIMEOUT_MS=120000 \
+          ENGINE_TIMEOUT_MS=300000 \
           CHAT_DISPATCH_MODE=task \
           CHAT_REQUIRE_VERIFIED_PR=true \
+          STARTUP_INTEGRITY_MODE=warn \
           DISCORD_ENABLED=false \
           SLACK_ENABLED=false \
           node dist/index.js >/tmp/talonbot-e2e-process-workflow.log 2>&1 &
@@ -54,7 +65,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          for i in $(seq 1 90); do
+          for i in $(seq 1 120); do
             if curl -sf http://127.0.0.1:8092/health >/dev/null; then
               break
             fi
@@ -88,7 +99,7 @@ jobs:
             exit 1
           fi
 
-          for i in $(seq 1 120); do
+          for i in $(seq 1 180); do
             REPORT=$(curl -sf -H "Authorization: Bearer e2e-process-control-token-abcdefghijklmnopqrstuvwxyz" \
               http://127.0.0.1:8092/tasks/$TASK_ID)
             STATE=$(echo "$REPORT" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' | head -n 1)
@@ -103,3 +114,10 @@ jobs:
           echo "$FINAL"
           echo "$FINAL" | grep -q '"status":"blocked"'
           echo "$FINAL" | grep -q 'verified_pr_required'
+
+      - name: Upload e2e runtime log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-process-runtime-log
+          path: /tmp/talonbot-e2e-process-workflow.log

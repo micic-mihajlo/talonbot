@@ -58,3 +58,18 @@ npm run cli -- audit --deep
 - Weekly:
 - `npm run cli -- audit --deep`
 - `npm run cli -- bundle --output /tmp`
+
+## Strict fail-closed startup behavior
+
+With `STARTUP_INTEGRITY_MODE=strict`, startup exits when critical controls fail, including:
+
+- expected runtime user mismatch (`RUNTIME_EXPECTED_USER`)
+- missing repository in task-first chat mode
+- missing `gh` when verified PR gating is enabled
+- non-writable critical runtime paths
+
+## Operations hardening scripts
+
+- `bin/security-audit.sh` validates service user isolation, integrity status, permissions, and deep static risk patterns.
+- `bin/setup-firewall.sh` supports idempotent rule application and dry-run planning.
+- `bin/talonbot-safe-bash` blocks common privilege escalation, exfiltration, and destructive command patterns.

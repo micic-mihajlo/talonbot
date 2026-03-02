@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
+RUNTIME_ENV_FILE="/etc/talonbot/talonbot.env"
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
 INSTALL_SERVICE=0
@@ -177,13 +178,16 @@ WORKER_TMUX_POLL_MS=${WORKER_TMUX_POLL_MS:-500}
 REPO_ROOT_DIR=${REPO_ROOT_DIR:-$run_as_home/workspace}
 WORKTREE_ROOT_DIR=${WORKTREE_ROOT_DIR:-$run_as_home/workspace/worktrees}
 RELEASE_ROOT_DIR=${RELEASE_ROOT_DIR:-$run_as_home/.local/share/talonbot/releases}
+RUNTIME_EXPECTED_USER=${RUNTIME_EXPECTED_USER:-$run_as_user}
+RELEASE_HEALTHCHECK_URL=${RELEASE_HEALTHCHECK_URL:-http://127.0.0.1:${CONTROL_HTTP_PORT:-8080}/health}
+RELEASE_HEALTHCHECK_TIMEOUT_MS=${RELEASE_HEALTHCHECK_TIMEOUT_MS:-45000}
 TASK_MAX_CONCURRENCY=${TASK_MAX_CONCURRENCY:-3}
 WORKER_MAX_RETRIES=${WORKER_MAX_RETRIES:-2}
 WORKTREE_STALE_HOURS=${WORKTREE_STALE_HOURS:-24}
 TASK_AUTOCLEANUP=${TASK_AUTOCLEANUP:-true}
 TASK_AUTO_COMMIT=${TASK_AUTO_COMMIT:-false}
 TASK_AUTO_PR=${TASK_AUTO_PR:-false}
-STARTUP_INTEGRITY_MODE=${STARTUP_INTEGRITY_MODE:-warn}
+STARTUP_INTEGRITY_MODE=${STARTUP_INTEGRITY_MODE:-strict}
 SESSION_LOG_RETENTION_DAYS=${SESSION_LOG_RETENTION_DAYS:-14}
 ENABLE_WEBHOOK_BRIDGE=${ENABLE_WEBHOOK_BRIDGE:-true}
 BRIDGE_SHARED_SECRET=${BRIDGE_SHARED_SECRET:-}
@@ -362,40 +366,34 @@ if [ "$INSTALL_SERVICE" -eq 1 ]; then
 
   log_info "Installing daemon service for user: $SERVICE_USER"
 
-  sudo chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
-  sudo chmod 600 "$ENV_FILE"
+  set_env_value DATA_DIR "/var/lib/talonbot"
+  set_env_value CONTROL_SOCKET_PATH "/var/lib/talonbot/control.sock"
+  set_env_value RELEASE_ROOT_DIR "/opt/talonbot"
+  set_env_value REPO_ROOT_DIR "/home/$SERVICE_USER/workspace"
+  set_env_value WORKTREE_ROOT_DIR "/home/$SERVICE_USER/workspace/worktrees"
+  set_env_value STARTUP_INTEGRITY_MODE "strict"
+  set_env_value RUNTIME_EXPECTED_USER "$SERVICE_USER"
 
-  SERVICE_FILE="$(mktemp)"
-  cat > "$SERVICE_FILE" <<SERVICE_EOF
-[Unit]
-Description=talonbot (always-on software-engineer agent)
-After=network.target
+  if [ -x "$ROOT_DIR/setup.sh" ]; then
+    log_info "Running host setup script..."
+    sudo "$ROOT_DIR/setup.sh" --runtime-user "$SERVICE_USER" "$run_as_user"
+  fi
 
-[Service]
-Type=simple
-User=$SERVICE_USER
-WorkingDirectory=$ROOT_DIR
-EnvironmentFile=$ENV_FILE
-ExecStartPre=/usr/bin/env bash $ROOT_DIR/bin/harden-permissions.sh
-ExecStartPre=/usr/bin/env bash $ROOT_DIR/bin/verify-manifest.sh
-ExecStart=$NODE_BIN $ROOT_DIR/dist/index.js
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectControlGroups=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectSystem=full
-ReadWritePaths=/var/lib/talonbot /home/$SERVICE_USER/.local/share/talonbot /home/$SERVICE_USER/workspace $ENV_FILE
+  sudo mkdir -p "$(dirname "$RUNTIME_ENV_FILE")"
+  sudo cp "$ENV_FILE" "$RUNTIME_ENV_FILE"
+  sudo chown root:"$SERVICE_USER" "$RUNTIME_ENV_FILE" 2>/dev/null || true
+  sudo chmod 640 "$RUNTIME_ENV_FILE"
 
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
-  sudo install -m 0644 "$SERVICE_FILE" /etc/systemd/system/talonbot.service
-  rm -f "$SERVICE_FILE"
+  if [ -f "$ROOT_DIR/systemd/talonbot.service" ]; then
+    SERVICE_FILE="$(mktemp)"
+    sed \
+      -e "s/^User=.*/User=$SERVICE_USER/" \
+      -e "s/^Group=.*/Group=$SERVICE_USER/" \
+      -e "s|^EnvironmentFile=.*|EnvironmentFile=$RUNTIME_ENV_FILE|" \
+      "$ROOT_DIR/systemd/talonbot.service" > "$SERVICE_FILE"
+    sudo install -m 0644 "$SERVICE_FILE" /etc/systemd/system/talonbot.service
+    rm -f "$SERVICE_FILE"
+  fi
 
   if [ -f "$ROOT_DIR/bin/talonbot" ]; then
     sudo install -m 0755 "$ROOT_DIR/bin/talonbot" /usr/local/bin/talonbot
@@ -409,11 +407,23 @@ SERVICE_EOF
   if [ -f "$ROOT_DIR/bin/setup-firewall.sh" ]; then
     sudo install -m 0755 "$ROOT_DIR/bin/setup-firewall.sh" /usr/local/bin/talonbot-setup-firewall
   fi
+  if [ -f "$ROOT_DIR/bin/update-release.sh" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/update-release.sh" /usr/local/bin/talonbot-update-release
+  fi
+  if [ -f "$ROOT_DIR/bin/rollback-release.sh" ]; then
+    sudo install -m 0755 "$ROOT_DIR/bin/rollback-release.sh" /usr/local/bin/talonbot-rollback-release
+  fi
   if [ -f "$ROOT_DIR/bin/uninstall.sh" ]; then
     sudo install -m 0755 "$ROOT_DIR/bin/uninstall.sh" /usr/local/bin/talonbot-uninstall
   fi
 
   sudo systemctl daemon-reload
+
+  if [ -x "$ROOT_DIR/bin/update-release.sh" ]; then
+    log_info "Publishing immutable release snapshot..."
+    sudo "$ROOT_DIR/bin/update-release.sh" --source "$ROOT_DIR" --skip-restart
+  fi
+
   sudo systemctl enable --now talonbot.service
 
   if [ "$RUN_DOCTOR" -eq 1 ]; then

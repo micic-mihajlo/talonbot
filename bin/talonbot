@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -f "$ROOT_DIR/package.json" ] && [ -d "/opt/talonbot/current" ]; then
+  ROOT_DIR="/opt/talonbot/current"
+fi
 cd "$ROOT_DIR"
 
 if [ "${1:-}" = "install" ]; then

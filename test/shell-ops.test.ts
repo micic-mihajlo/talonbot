@@ -113,6 +113,27 @@ describe('ops shell scripts', () => {
       blocked = true;
     }
     expect(blocked).toBe(true);
+
+    blocked = false;
+    try {
+      run('bin/talonbot-safe-bash', ['docker run --privileged ubuntu:latest']);
+    } catch {
+      blocked = true;
+    }
+    expect(blocked).toBe(true);
+  });
+
+  it('firewall script supports dry-run output', () => {
+    const output = run('bin/setup-firewall.sh', ['--dry-run']);
+    expect(output.includes('iptables -P INPUT DROP')).toBe(true);
+    expect(output.includes('setup-firewall: dry-run')).toBe(true);
+  });
+
+  it('setup script supports dry-run without root mutations', () => {
+    const adminUser = process.env.USER || process.env.LOGNAME || execFileSync('id', ['-un'], { encoding: 'utf8' }).trim();
+    const output = run('setup.sh', ['--dry-run', '--runtime-user', 'talonbot', adminUser]);
+    expect(output.includes('talonbot host setup')).toBe(true);
+    expect(output.includes('[dry-run]')).toBe(true);
   });
 
   it('security audit passes with valid config and release state', async () => {

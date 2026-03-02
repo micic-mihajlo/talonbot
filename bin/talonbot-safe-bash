@@ -17,11 +17,19 @@ if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])rm[[:space:]]+-rf[[:space:]]+/(
   block "dangerous recursive deletion"
 fi
 
-if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(chmod|chown)[[:space:]].*/etc'; then
+if echo "$COMMAND" | grep -E -qi '(docker[[:space:]]+run|docker[[:space:]]+create).*(--privileged|--pid=host|--network=host)'; then
+  block "unsafe docker privilege flags"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(docker[[:space:]]+run|docker[[:space:]]+create).*(-v|--volume)[[:space:]]+/:/'; then
+  block "unsafe docker host root mount"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(chmod|chown)[[:space:]].*/(etc|root|proc)'; then
   block "system permission modification"
 fi
 
-if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(>|>>)[[:space:]]*/(etc|root)/'; then
+if echo "$COMMAND" | grep -E -qi '(^|[[:space:]])(>|>>)[[:space:]]*/(etc|root|proc)/'; then
   block "writing to privileged paths"
 fi
 
@@ -29,7 +37,11 @@ if echo "$COMMAND" | grep -E -qi 'curl[[:space:]].*\|[[:space:]]*(bash|sh)'; the
   block "remote script execution pipeline"
 fi
 
-if echo "$COMMAND" | grep -E -qi '(sudo[[:space:]]+su|su[[:space:]]+-)'; then
+if echo "$COMMAND" | grep -E -qi '/proc/(self|[0-9]+)/(environ|cmdline)'; then
+  block "runtime process secret exfiltration path"
+fi
+
+if echo "$COMMAND" | grep -E -qi '(sudo[[:space:]]+su|su[[:space:]]+-|sudo[[:space:]]+-i)'; then
   block "privilege escalation shell"
 fi
 
