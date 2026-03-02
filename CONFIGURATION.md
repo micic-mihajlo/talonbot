@@ -24,7 +24,9 @@
   - `task`: non-command transport messages create orchestrator tasks.
   - `session`: non-command messages go to conversational session engine.
   - `hybrid`: defaults to `session`; use `task: ...` / `/task ...` to force task dispatch.
-- `CHAT_REQUIRE_VERIFIED_PR` default: `true` (chat-sourced tasks must produce a verified PR URL before `done`)
+- `CHAT_REQUIRE_VERIFIED_PR` default: `true` (applies to `implementation` intent by default; other intents require summary unless explicitly overridden).
+- `taskIntent` metadata (dispatch-level) can be one of: `research|review|summarize|implementation|ops|unknown`.
+- `requiredArtifacts` metadata values are `summary`, `branch`, `commit`, `pr`.
 - `CHAT_TASK_UPDATE_POLL_MS` default: `4000` (fallback notifier reconciliation interval)
 - `ENGINE_CWD` default: `~/.local/share/talonbot/engine` (process engine working directory)
 - `PI_SKIP_VERSION_CHECK=1` is recommended for process-mode `pi` engine runs to avoid version-check stalls.

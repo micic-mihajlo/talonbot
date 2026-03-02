@@ -39,7 +39,15 @@ npm run cli -- attach --session <session-key>
 Strict task-first chat contract:
 - non-command Discord/Slack messages dispatch as tasks by default.
 - use `chat: <message>` (or `/chat <message>`) for conversational session turns.
-- terminal `done` requires verified PR evidence when `CHAT_REQUIRE_VERIFIED_PR=true`.
+- completion evidence is intent-aware:
+  - `implementation` requires verified PR by default when `CHAT_REQUIRE_VERIFIED_PR=true`;
+  - `research`, `review`, `summarize`, `ops`, `unknown` require summary by default;
+  - explicit override is available through metadata (`taskIntent`, `requiresVerifiedPr`, `requirePrOverride`, `requiredArtifacts`).
+
+Example policy behavior:
+
+1. `Implement endpoint rollback checks` → terminal done waits for verified PR.
+2. `Summarize changes in the last week` → terminal done can be summary-only.
 
 ## Release operations
 

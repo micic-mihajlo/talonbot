@@ -176,6 +176,7 @@ describe('task orchestration flow', () => {
       ENGINE_MODE: 'mock',
       CONTROL_SOCKET_PATH: path.join(sandbox, 'data', 'control.sock'),
       RELEASE_ROOT_DIR: path.join(sandbox, 'release-root'),
+      CHAT_REQUIRE_VERIFIED_PR: false,
       STARTUP_INTEGRITY_MODE: 'warn',
     };
 

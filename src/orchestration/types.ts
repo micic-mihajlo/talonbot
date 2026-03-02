@@ -12,6 +12,9 @@ export type TaskArtifactKind =
   | 'error'
   | 'no_artifact';
 
+export type TaskIntent = 'research' | 'review' | 'summarize' | 'implementation' | 'ops' | 'unknown';
+export type RequiredArtifactKind = 'summary' | 'branch' | 'commit' | 'pr';
+
 export interface TaskArtifact {
   kind: TaskArtifactKind;
   at: string;
@@ -41,6 +44,9 @@ export interface TaskRecord {
   source: 'transport' | 'webhook' | 'operator' | 'system';
   text: string;
   repoId: string;
+  taskIntent?: TaskIntent;
+  requiresVerifiedPr?: boolean;
+  requiredArtifacts?: RequiredArtifactKind[];
   status: TaskStatus;
   state: TaskState;
   assignedSession: string;
@@ -87,6 +93,10 @@ export interface SubmitTaskInput {
   source?: TaskRecord['source'];
   parentTaskId?: string;
   fanout?: string[];
+  taskIntent?: TaskIntent;
+  requiresVerifiedPr?: boolean;
+  requirePrOverride?: boolean;
+  requiredArtifacts?: RequiredArtifactKind[];
 }
 
 export interface WorktreeInfo {

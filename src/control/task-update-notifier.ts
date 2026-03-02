@@ -1,5 +1,5 @@
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
-import type { TaskProgressReport, TaskRecord, TaskStatus } from '../orchestration/types.js';
+import type { RequiredArtifactKind, TaskProgressReport, TaskRecord, TaskStatus } from '../orchestration/types.js';
 import type { TaskThreadBinding } from './store.js';
 import { SessionStore } from './store.js';
 
@@ -17,6 +17,50 @@ type TransportSource = TaskThreadBinding['source'];
 const TERMINAL = new Set<TaskStatus>(['done', 'failed', 'cancelled']);
 const TRACKED_UPDATES = new Set<TaskStatus>(['running', 'blocked', 'done', 'failed', 'cancelled']);
 
+const inferIntent = (task: TaskRecord): string => {
+  if (task.taskIntent) {
+    return task.taskIntent;
+  }
+  return 'unknown';
+};
+
+const inferRequiredArtifacts = (task: TaskRecord): RequiredArtifactKind[] => {
+  if (task.requiredArtifacts?.length) {
+    return task.requiredArtifacts;
+  }
+  if (typeof task.requiresVerifiedPr === 'boolean') {
+    return task.requiresVerifiedPr ? ['pr'] : ['summary'];
+  }
+  return ['summary'];
+};
+
+const hasArtifact = (task: TaskRecord, artifact: 'summary' | 'branch' | 'commit' | 'pr') => {
+  const artifacts = task.artifacts || [];
+  if (artifact === 'summary') {
+    return artifacts.some((item) => item.kind === 'summary');
+  }
+  if (artifact === 'branch') {
+    return Boolean(task.branch || artifacts.some((item) => item.kind === 'launcher' && !!item.branch));
+  }
+  if (artifact === 'commit') {
+    return artifacts.some((item) => item.kind === 'git_commit');
+  }
+  if (artifact === 'pr') {
+    return artifacts.some((item) => item.kind === 'pull_request');
+  }
+  return false;
+};
+
+const missingArtifacts = (task: TaskRecord) => {
+  return inferRequiredArtifacts(task).filter((artifact) => !hasArtifact(task, artifact));
+};
+
+const describeTaskRequirements = (task: TaskRecord) => {
+  const intent = inferIntent(task);
+  const required = inferRequiredArtifacts(task);
+  return `intent=${intent}, required=${required.length ? required.join('/') : 'none'}`;
+};
+
 const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
   const evidence: string[] = [];
   if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
@@ -30,11 +74,24 @@ const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
   }
 
   if (task.status === 'blocked') {
-    return `Task ${task.id} is blocked. ${report?.message || task.error || 'Operator action is required.'}${evidenceLine}`;
+    if (task.requiresVerifiedPr && task.error?.includes('verified_pr_required')) {
+      return `Task ${task.id} blocked for policy compliance (${describeTaskRequirements(task)}). Blocked pending verified PR URL.${evidenceLine}`;
+    }
+
+    const missing = missingArtifacts(task);
+    if (missing.length > 0) {
+      return `Task ${task.id} blocked for policy compliance (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
+    }
+
+    return `Task ${task.id} is blocked. ${report?.message || task.error || 'Operator action is required.'} (${describeTaskRequirements(task)})${evidenceLine}`;
   }
 
   if (task.status === 'done') {
-    return `Task ${task.id} completed with verified artifacts.${evidenceLine}`;
+    const missing = missingArtifacts(task);
+    if (missing.length > 0) {
+      return `Task ${task.id} has no terminal completion evidence yet (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
+    }
+    return `Task ${task.id} completed with required artifacts (${describeTaskRequirements(task)}).${evidenceLine}`;
   }
 
   if (task.status === 'failed') {

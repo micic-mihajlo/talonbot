@@ -113,6 +113,22 @@ const tryExtractTaskRoute = (pathname: string) => {
   return null;
 };
 
+const toTaskPolicyHint = (
+  body: Partial<ControlDispatchPayload>,
+): {
+  taskIntent?: ControlDispatchPayload['taskIntent'];
+  requiresVerifiedPr?: boolean;
+  requirePrOverride?: boolean;
+  requiredArtifacts?: Array<'summary' | 'branch' | 'commit' | 'pr'>;
+} => {
+  return {
+    taskIntent: body.taskIntent,
+    requiresVerifiedPr: body.requiresVerifiedPr,
+    requirePrOverride: body.requirePrOverride,
+    requiredArtifacts: body.requiredArtifacts,
+  };
+};
+
 const tryExtractWorkerRoute = (pathname: string) => {
   const stop = pathname.match(/^\/workers\/([^/]+)\/stop$/);
   if (stop) {
@@ -324,7 +340,7 @@ export const createHttpServer = (
           reply: async () => {
             // reply is intentionally dropped for API dispatches
           },
-        });
+        }, toTaskPolicyHint(body));
 
         writeJson(res, 200, {
           accepted: result.accepted,
@@ -474,6 +490,10 @@ export const createHttpServer = (
           sessionKey?: string;
           source?: 'transport' | 'webhook' | 'operator' | 'system';
           fanout?: string[];
+          taskIntent?: 'research' | 'review' | 'summarize' | 'implementation' | 'ops' | 'unknown';
+          requiresVerifiedPr?: boolean;
+          requirePrOverride?: boolean;
+          requiredArtifacts?: Array<'summary' | 'branch' | 'commit' | 'pr'>;
         };
 
         if (!body.text || !body.text.trim()) {
@@ -487,6 +507,10 @@ export const createHttpServer = (
           sessionKey: body.sessionKey,
           source: body.source,
           fanout: body.fanout,
+          taskIntent: body.taskIntent,
+          requiresVerifiedPr: body.requiresVerifiedPr,
+          requirePrOverride: body.requirePrOverride,
+          requiredArtifacts: body.requiredArtifacts,
         });
 
         writeJson(res, 200, { task });

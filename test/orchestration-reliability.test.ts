@@ -76,7 +76,11 @@ describe('task orchestration reliability upgrades', () => {
     const repoDir = path.join(sandbox, 'repo');
     await initGitRepo(repoDir);
 
-    orchestrator = new TaskOrchestrator(buildConfig(sandbox));
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: false,
+      }),
+    );
     await orchestrator.initialize();
     await orchestrator.registerRepo({
       id: 'repo',
@@ -111,7 +115,11 @@ describe('task orchestration reliability upgrades', () => {
     const repoDir = path.join(sandbox, 'repo-no-artifact');
     await initGitRepo(repoDir);
 
-    orchestrator = new TaskOrchestrator(buildConfig(sandbox));
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: false,
+      }),
+    );
     await orchestrator.initialize();
     await orchestrator.registerRepo({
       id: 'repo-no-artifact',
@@ -140,6 +148,7 @@ describe('task orchestration reliability upgrades', () => {
 
     orchestrator = new TaskOrchestrator(
       buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: false,
         ENGINE_MODE: 'process',
         ENGINE_COMMAND: 'sh',
         ENGINE_ARGS: '-lc "exit 1"',
@@ -208,6 +217,39 @@ describe('task orchestration reliability upgrades', () => {
     expect(lifecycle).toContain('task_queued');
     expect(lifecycle).toContain('task_running');
     expect(lifecycle).toContain('task_blocked');
+  });
+
+  it('allows non-pr research tasks to complete when summary artifact exists', async () => {
+    const repoDir = path.join(sandbox, 'repo-no-pr');
+    await initGitRepo(repoDir);
+
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: true,
+      }),
+    );
+    await orchestrator.initialize();
+    await orchestrator.registerRepo({
+      id: 'repo-no-pr',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const task = await orchestrator.submitTask({
+      text: 'Summarize recent changes and provide recommendations.',
+      repoId: 'repo-no-pr',
+      source: 'transport',
+      taskIntent: 'summarize',
+      requiresVerifiedPr: false,
+    });
+
+    await waitFor(() => orchestrator?.getTask(task.id)?.status === 'done', 15000);
+    const done = orchestrator.getTask(task.id);
+    expect(done?.status).toBe('done');
+    expect(done?.error).toBeUndefined();
+    expect(done?.requiresVerifiedPr).toBe(false);
   });
 });
 

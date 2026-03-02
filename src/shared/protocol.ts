@@ -31,6 +31,10 @@ export interface ControlDispatchPayload {
   threadId?: string;
   userId?: string;
   senderId?: string;
+  taskIntent?: 'research' | 'review' | 'summarize' | 'implementation' | 'ops' | 'unknown';
+  requiresVerifiedPr?: boolean;
+  requirePrOverride?: boolean;
+  requiredArtifacts?: Array<'summary' | 'branch' | 'commit' | 'pr'>;
   text: string;
   metadata?: Record<string, string>;
   sessionKey?: string;
