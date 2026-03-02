@@ -118,6 +118,8 @@ npm run doctor
 npm run cli -- operator
 ```
 
+- Automated Discord task test passed v4
+
 ## P0 CI gates
 
 Pull requests and `main` pushes are gated on these required checks:
