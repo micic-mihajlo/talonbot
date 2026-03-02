@@ -5,6 +5,19 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+const ensureBinary = async (binary: string, hint: string) => {
+  try {
+    await execFileAsync('bash', ['-lc', `command -v ${binary}`], {
+      timeout: 10000,
+      windowsHide: true,
+      maxBuffer: 128 * 1024,
+      encoding: 'utf8',
+    });
+  } catch {
+    throw new Error(`${binary} is required but not available on PATH. ${hint}`);
+  }
+};
+
 export interface WorkerLaunchResult extends WorktreeInfo {
   assignedSession: string;
 }
@@ -48,6 +61,8 @@ export class WorkerLauncher {
   }
 
   async launch(repo: RepoRegistration, taskId: string, taskText = ''): Promise<WorkerLaunchResult> {
+    await ensureBinary(this.tmuxBinary, 'Install tmux and ensure it is on PATH for the talonbot runtime user.');
+    await ensureBinary('gh', 'Install GitHub CLI and expose it on PATH (e.g. /usr/local/bin/gh).');
     const worktree = await this.worktree.createWorktree(repo, taskId);
     return {
       ...worktree,
