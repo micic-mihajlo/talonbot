@@ -1,8 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { config } from '../config.js';
 import { formatStartupIssue, validateStartupConfig, type StartupIssue } from '../utils/startup.js';
+
+const execFileAsync = promisify(execFile);
 
 type DoctorArgs = {
   json: boolean;
@@ -59,6 +63,40 @@ const buildIssue = (
   code?: string,
 ) => {
   issues.push({ severity, area, message, remediation, code });
+};
+
+
+const checkTooling = async (issues: StartupIssue[]) => {
+  try {
+    await execFileAsync('bash', ['-lc', 'command -v gh'], { timeout: 10000, windowsHide: true, maxBuffer: 128 * 1024, encoding: 'utf8' });
+  } catch {
+    buildIssue(
+      issues,
+      'error',
+      'tooling',
+      'GitHub CLI (gh) is not available on PATH for this runtime.',
+      'Install gh and ensure PATH includes /usr/local/bin:/usr/bin:/bin (and linuxbrew if used).',
+      'tooling_gh_missing',
+    );
+    return;
+  }
+
+  if (process.env.CI === 'true' || process.env.CI === '1') {
+    return;
+  }
+
+  try {
+    await execFileAsync('gh', ['auth', 'status'], { timeout: 15000, windowsHide: true, maxBuffer: 256 * 1024, encoding: 'utf8' });
+  } catch {
+    buildIssue(
+      issues,
+      'warn',
+      'tooling',
+      'GitHub CLI is installed but not authenticated for the runtime user.',
+      'Run gh auth login as the talonbot runtime user.',
+      'tooling_gh_auth_missing',
+    );
+  }
 };
 
 const buildRunChecks = (issues: StartupIssue[]) => {
@@ -258,6 +296,7 @@ const checkRuntime = async (url: string, issues: StartupIssue[], token?: string)
 export const gatherDoctorIssues = async (args: DoctorArgs = parseArgs()): Promise<StartupIssue[]> => {
   const issues: StartupIssue[] = validateStartupConfig(config);
   buildRunChecks(issues);
+  await checkTooling(issues);
 
   if (args.runtimeUrl) {
     const token = args.runtimeToken || config.CONTROL_AUTH_TOKEN;

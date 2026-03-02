@@ -4,6 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+TALONBOT_DEFAULT_PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/bin:/usr/bin:/bin"
+if [ -n "${PATH:-}" ]; then
+  export PATH="$TALONBOT_DEFAULT_PATH:$PATH"
+else
+  export PATH="$TALONBOT_DEFAULT_PATH"
+fi
+
+
 ENV_FILE="${TALONBOT_ENV_FILE:-/etc/talonbot/talonbot.env}"
 if [ ! -f "$ENV_FILE" ]; then
   ENV_FILE="${ROOT_DIR}/.env"

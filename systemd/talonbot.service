@@ -9,6 +9,7 @@ User=talonbot
 Group=talonbot
 WorkingDirectory=/opt/talonbot/current
 EnvironmentFile=/etc/talonbot/talonbot.env
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/bin:/usr/bin:/bin
 ExecStartPre=/usr/bin/env bash /opt/talonbot/current/bin/harden-permissions.sh
 ExecStartPre=/usr/bin/env bash /opt/talonbot/current/bin/verify-manifest.sh
 ExecStart=/usr/bin/env bash /opt/talonbot/current/start.sh
