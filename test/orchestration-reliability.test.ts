@@ -169,6 +169,46 @@ describe('task orchestration reliability upgrades', () => {
     await waitFor(async () => !(await exists(failed?.worktreePath || '')), 5000);
     expect(await exists(failed?.worktreePath || '')).toBe(false);
   });
+
+  it('emits lifecycle events and blocks chat-sourced tasks without verified PR evidence', async () => {
+    const repoDir = path.join(sandbox, 'repo-chat-gate');
+    await initGitRepo(repoDir);
+
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: true,
+      }),
+    );
+    await orchestrator.initialize();
+    await orchestrator.registerRepo({
+      id: 'repo-chat-gate',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const lifecycle: string[] = [];
+    const unsubscribe = orchestrator.onLifecycle((event) => {
+      lifecycle.push(event.type);
+    });
+
+    const task = await orchestrator.submitTask({
+      text: 'Implement task with strict PR gate.',
+      repoId: 'repo-chat-gate',
+      source: 'transport',
+    });
+
+    await waitFor(() => orchestrator?.getTask(task.id)?.status === 'blocked', 15000);
+    unsubscribe();
+
+    const blocked = orchestrator.getTask(task.id);
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.error).toContain('verified_pr_required');
+    expect(lifecycle).toContain('task_queued');
+    expect(lifecycle).toContain('task_running');
+    expect(lifecycle).toContain('task_blocked');
+  });
 });
 
 describe('worker launcher + health monitor', () => {

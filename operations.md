@@ -36,6 +36,11 @@ npm run cli -- workers stop --session <worker-session>
 npm run cli -- attach --session <session-key>
 ```
 
+Strict task-first chat contract:
+- non-command Discord/Slack messages dispatch as tasks by default.
+- use `chat: <message>` (or `/chat <message>`) for conversational session turns.
+- terminal `done` requires verified PR evidence when `CHAT_REQUIRE_VERIFIED_PR=true`.
+
 ## Release operations
 
 ```bash
@@ -111,6 +116,12 @@ npm run cli -- sentry status
 npm run cli -- firewall --dry-run
 npm run cli -- bundle --output /tmp
 ```
+
+Transport outbox remediation:
+1. Generate a diagnostics bundle and inspect `transport-outbox.discord.json` and `transport-outbox.slack.json`.
+2. If poison records exist, confirm channel/thread reachability and credentials.
+3. Restart service after remediation: `npm run cli -- restart`.
+4. Re-run `npm run doctor -- --strict` and verify no new poison growth.
 
 ## Uninstall
 

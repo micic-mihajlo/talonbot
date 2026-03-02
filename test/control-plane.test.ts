@@ -45,6 +45,16 @@ const createWorkingDirectory = async () => {
   return workingDirectory;
 };
 
+const waitFor = async (predicate: () => boolean, timeoutMs = 2000, intervalMs = 20) => {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error('timeout waiting for condition');
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+};
+
 describe('control plane alias behavior', () => {
   let workingDirectory = '';
   let controlPlane: ControlPlane;
@@ -271,5 +281,134 @@ describe('control plane rpc behavior', () => {
       error: 'session_not_found',
       id: 'missing-1',
     });
+  });
+});
+
+describe('control plane task-first dispatch', () => {
+  let workingDirectory = '';
+  let controlPlane: ControlPlane;
+
+  beforeEach(async () => {
+    workingDirectory = await createWorkingDirectory();
+  });
+
+  afterEach(async () => {
+    controlPlane?.stop();
+    await rm(workingDirectory, { recursive: true, force: true });
+  });
+
+  it('queues transport messages as tasks and posts lifecycle updates', async () => {
+    let engineCalls = 0;
+    let submitCalls = 0;
+    const taskState = new Map<string, any>();
+    const fakeTasks = {
+      submitTask: async ({ text, sessionKey, source }: { text: string; sessionKey?: string; source?: string }) => {
+        submitCalls += 1;
+        const task = {
+          id: `task-${submitCalls}`,
+          repoId: 'default',
+          text,
+          sessionKey,
+          source,
+          status: 'queued',
+          assignedSession: `dev-agent-default-task-${submitCalls}`,
+        };
+        taskState.set(task.id, task);
+        setTimeout(() => {
+          task.status = 'running';
+        }, 20);
+        setTimeout(() => {
+          task.status = 'done';
+        }, 40);
+        return task;
+      },
+      getTask: (taskId: string) => taskState.get(taskId) || null,
+      buildTaskReport: (taskId: string) => ({
+        taskId,
+        status: 'done',
+        artifactState: 'artifact-backed',
+        generatedAt: new Date().toISOString(),
+        message: 'Applied changes and opened PR.',
+        evidence: {
+          prUrl: 'https://github.com/acme/repo/pull/1',
+        },
+      }),
+    };
+
+    const config = {
+      ...buildTestConfig(workingDirectory),
+      CHAT_DISPATCH_MODE: 'task' as const,
+      CHAT_TASK_UPDATE_POLL_MS: 10,
+    };
+
+    controlPlane = new ControlPlane(
+      config,
+      () => ({
+        complete: async (input: EngineInput) => {
+          engineCalls += 1;
+          return { text: `engine:${input.text}` };
+        },
+        ping: async () => true,
+      }),
+      { tasks: fakeTasks as any },
+    );
+    const replies: string[] = [];
+    await controlPlane.initialize();
+    controlPlane.registerOutboundSender('socket', async (message) => {
+      replies.push(message.text);
+    });
+
+    const dispatch = await controlPlane.dispatch(mkInboundMessage('Implement release health checks'), {
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+
+    expect(dispatch.accepted).toBe(true);
+    expect(dispatch.reason).toBe('task_queued');
+    expect(submitCalls).toBe(1);
+    expect(engineCalls).toBe(0);
+    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+
+    await waitFor(() => replies.some((text) => text.includes('Task task-1 completed')), 2000);
+    expect(replies.some((text) => text.includes('github.com/acme/repo/pull/1'))).toBe(true);
+  });
+
+  it('routes chat-prefixed messages to session engine while in task mode', async () => {
+    let submitCalls = 0;
+    const fakeTasks = {
+      submitTask: async () => {
+        submitCalls += 1;
+        return {
+          id: 'task-1',
+          repoId: 'default',
+          status: 'queued',
+          assignedSession: 'dev-agent-default-task-1',
+        };
+      },
+      getTask: () => null,
+      buildTaskReport: () => null,
+    };
+
+    controlPlane = new ControlPlane(
+      {
+        ...buildTestConfig(workingDirectory),
+        CHAT_DISPATCH_MODE: 'task' as const,
+        CHAT_TASK_UPDATE_POLL_MS: 10,
+      },
+      () => createEngine(),
+      { tasks: fakeTasks as any },
+    );
+    await controlPlane.initialize();
+
+    const replies: string[] = [];
+    await controlPlane.dispatch(mkInboundMessage('chat: give me a plain response'), {
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+
+    expect(submitCalls).toBe(0);
+    expect(replies.some((text) => text.includes('engine:give me a plain response'))).toBe(true);
   });
 });

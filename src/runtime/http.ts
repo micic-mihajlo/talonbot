@@ -20,6 +20,7 @@ export interface RuntimeServices {
   release?: ReleaseManager;
   sentry?: SentryAgent;
   diagnosticsOutputDir?: string;
+  startupReconciliation?: unknown;
 }
 
 const setSecurityHeaders = (res: http.ServerResponse) => {
@@ -309,6 +310,7 @@ export const createHttpServer = (
             accepted: true,
             reason: 'enqueued',
             sessionKey: targetSessionKey,
+            mode: 'session',
           });
           logger.info('dispatch routed to session', {
             sessionKey: targetSessionKey,
@@ -328,6 +330,8 @@ export const createHttpServer = (
           accepted: result.accepted,
           reason: result.reason,
           sessionKey: result.sessionKey,
+          mode: result.mode,
+          taskId: result.taskId,
         });
         logger.info('dispatch accepted', {
           sessionKey: result.sessionKey,
@@ -817,6 +821,7 @@ export const createHttpServer = (
           tasks: services?.tasks,
           release: services?.release,
           audit,
+          reconciliation: services?.startupReconciliation,
         });
 
         writeJson(res, 200, bundle);

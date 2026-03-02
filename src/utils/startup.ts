@@ -72,6 +72,8 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   const expandedWorktreeDir = expandPath(config.WORKTREE_ROOT_DIR);
   const expandedReleaseDir = expandPath(config.RELEASE_ROOT_DIR);
   const expandedEngineDir = expandPath(config.ENGINE_CWD);
+  const expandedOutboxStateFile = expandPath(config.TRANSPORT_OUTBOX_STATE_FILE);
+  const expandedOutboxDir = path.dirname(expandedOutboxStateFile);
 
   if (!config.CONTROL_AUTH_TOKEN) {
     issues.push(
@@ -180,6 +182,44 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
     );
   }
 
+  if (config.CHAT_REQUIRE_VERIFIED_PR && !commandExists('gh')) {
+    const strict = config.STARTUP_INTEGRITY_MODE === 'strict';
+    issues.push(
+      issue({
+        severity: strict ? 'error' : 'warn',
+        area: 'orchestration',
+        message: 'CHAT_REQUIRE_VERIFIED_PR=true requires GitHub CLI (`gh`) to verify PR URLs.',
+        remediation: 'Install GitHub CLI and ensure it is on PATH for the runtime user.',
+        code: 'github_cli_missing_for_pr_verification',
+      }),
+    );
+  }
+
+  if (config.CHAT_DISPATCH_MODE === 'task') {
+    const registryFile = path.join(expandedDataDir, 'repos', 'registry.json');
+    let hasRepo = false;
+    try {
+      const raw = fs.readFileSync(registryFile, { encoding: 'utf8' });
+      const parsed = JSON.parse(raw) as { repos?: unknown };
+      hasRepo = Array.isArray(parsed.repos) && parsed.repos.length > 0;
+    } catch {
+      hasRepo = false;
+    }
+
+    if (!hasRepo) {
+      const strict = config.STARTUP_INTEGRITY_MODE === 'strict';
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'orchestration',
+          message: 'CHAT_DISPATCH_MODE=task has no registered repositories.',
+          remediation: 'Register at least one repo before startup: talonbot repos register --id <id> --path <path> --default true',
+          code: 'chat_task_mode_requires_repo',
+        }),
+      );
+    }
+  }
+
   if (config.SLACK_ENABLED && (!config.SLACK_BOT_TOKEN || !config.SLACK_APP_TOKEN || !config.SLACK_SIGNING_SECRET)) {
     issues.push(
       issue({
@@ -275,6 +315,19 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
         message: `RELEASE_ROOT_DIR is not writable (${expandedReleaseDir}): ${releaseDirErr}`,
         remediation: `Create and chown release root: mkdir -p "${expandedReleaseDir}" && chown -R $(id -un):$(id -gn) "${expandedReleaseDir}"`,
         code: 'release_root_not_writable',
+      }),
+    );
+  }
+
+  const outboxDirErr = ensureDirWritable(expandedOutboxDir);
+  if (outboxDirErr) {
+    issues.push(
+      issue({
+        severity: 'error',
+        area: 'transports',
+        message: `TRANSPORT_OUTBOX_STATE_FILE directory is not writable (${expandedOutboxDir}): ${outboxDirErr}`,
+        remediation: `Create and chown outbox directory: mkdir -p "${expandedOutboxDir}" && chown -R $(id -un):$(id -gn) "${expandedOutboxDir}"`,
+        code: 'transport_outbox_dir_not_writable',
       }),
     );
   }

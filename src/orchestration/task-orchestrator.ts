@@ -8,6 +8,8 @@ import type {
   RepoRegistrationInput,
   SubmitTaskInput,
   TaskArtifact,
+  TaskLifecycleEvent,
+  TaskLifecycleEventType,
   TaskProgressReport,
   TaskRecord,
   TaskSnapshot,
@@ -19,6 +21,7 @@ import { GitHubAutomation } from './github-automation.js';
 import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
+import { verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -33,6 +36,15 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, Set<TaskStatus>> = {
   done: new Set(['queued', 'blocked', 'failed']),
   failed: new Set(['queued', 'blocked', 'done']),
   cancelled: new Set(['queued']),
+};
+
+const TASK_EVENT_TYPE_BY_STATUS: Record<TaskStatus, TaskLifecycleEventType> = {
+  queued: 'task_queued',
+  running: 'task_running',
+  blocked: 'task_blocked',
+  done: 'task_done',
+  failed: 'task_failed',
+  cancelled: 'task_cancelled',
 };
 
 const isTaskStatus = (value: unknown): value is TaskStatus =>
@@ -135,6 +147,7 @@ export class TaskOrchestrator {
   private readonly engine: AgentEngine;
   private readonly launcher: WorkerLauncher;
   private readonly healthMonitor = new OrchestrationHealthMonitor();
+  private readonly lifecycleListeners = new Map<string, (event: TaskLifecycleEvent) => void>();
   private maintenanceInFlight = false;
   private lastMaintenanceAt = 0;
   private healthCache?: { atMs: number; snapshot: OrchestrationHealthSnapshot };
@@ -181,6 +194,14 @@ export class TaskOrchestrator {
       ? taskIds.map((taskId) => this.tasks.get(taskId)).filter((task): task is TaskRecord => Boolean(task))
       : this.listTasks();
     return tasks.map((task) => this.buildProgressReport(task));
+  }
+
+  onLifecycle(listener: (event: TaskLifecycleEvent) => void) {
+    const id = randomId('task-listener');
+    this.lifecycleListeners.set(id, listener);
+    return () => {
+      this.lifecycleListeners.delete(id);
+    };
   }
 
   async getHealthStatus(force = false): Promise<OrchestrationHealthSnapshot> {
@@ -338,6 +359,7 @@ export class TaskOrchestrator {
 
     this.tasks.set(task.id, task);
     this.queue.push(task.id);
+    this.emitLifecycle(task, 'Task queued.');
     await this.persist();
     this.pump();
     return task;
@@ -425,6 +447,7 @@ export class TaskOrchestrator {
     });
 
     this.tasks.set(parent.id, parent);
+    this.emitLifecycle(parent, 'Fan-out parent task created.');
 
     for (const childPrompt of fanout) {
       const child = this.createTask({
@@ -437,6 +460,7 @@ export class TaskOrchestrator {
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
       this.queue.push(child.id);
+      this.emitLifecycle(child, 'Fan-out child task queued.');
     }
 
     await this.persist();
@@ -708,6 +732,36 @@ export class TaskOrchestrator {
             this.updateParentState(task);
             return;
           }
+        }
+      }
+
+      if (this.config.CHAT_REQUIRE_VERIFIED_PR && task.source === 'transport') {
+        const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+        const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl) : false;
+        if (!verified) {
+          task.error = 'blocked: verified_pr_required';
+          this.appendArtifact(
+            task,
+            {
+              kind: 'error',
+              at: new Date().toISOString(),
+              summary: 'Task blocked pending verified PR URL.',
+              prUrl,
+            },
+            false,
+          );
+          this.transitionTask(task, {
+            to: 'blocked',
+            kind: 'blocked',
+            message: 'Blocked pending verified PR URL.',
+            details: {
+              reason: 'verified_pr_required',
+              prUrl: prUrl || '',
+            },
+          });
+          await this.persist();
+          this.updateParentState(task);
+          return;
         }
       }
 
@@ -992,6 +1046,7 @@ export class TaskOrchestrator {
   private transitionTask(task: TaskRecord, input: TransitionInput) {
     const from = task.status;
     const to = input.to;
+    let transitioned = false;
 
     if (from !== to) {
       if (!ALLOWED_TRANSITIONS[from]?.has(to)) {
@@ -1019,6 +1074,7 @@ export class TaskOrchestrator {
         message: `${from} -> ${to}`,
         details: toEventDetails({ from, to }),
       });
+      transitioned = true;
     }
 
     task.events.push({
@@ -1027,6 +1083,10 @@ export class TaskOrchestrator {
       message: input.message,
       details: toEventDetails(input.details),
     });
+
+    if (transitioned) {
+      this.emitLifecycle(task, input.message);
+    }
   }
 
   private appendArtifact(task: TaskRecord, artifact: TaskArtifact, secondary = false) {
@@ -1142,6 +1202,30 @@ export class TaskOrchestrator {
       message,
       evidence,
     };
+  }
+
+  private emitLifecycle(task: TaskRecord, message: string) {
+    if (this.lifecycleListeners.size === 0) {
+      return;
+    }
+
+    const event: TaskLifecycleEvent = {
+      type: TASK_EVENT_TYPE_BY_STATUS[task.status],
+      taskId: task.id,
+      status: task.status,
+      repoId: task.repoId,
+      sessionKey: task.sessionKey,
+      at: new Date().toISOString(),
+      message,
+    };
+
+    for (const listener of this.lifecycleListeners.values()) {
+      try {
+        listener(event);
+      } catch {
+        // ignore listener failures
+      }
+    }
   }
 
   private normalizeTask(raw: Partial<TaskRecord>): TaskRecord | null {
@@ -1276,7 +1360,7 @@ export class TaskOrchestrator {
         const task = this.normalizeTask(item as Partial<TaskRecord>);
         if (!task) continue;
 
-        if (task.status === 'running') {
+        if (task.status === 'running' && this.config.TASK_RECOVER_ON_STARTUP) {
           this.transitionTask(task, {
             to: 'queued',
             kind: 'recovered',

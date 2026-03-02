@@ -100,6 +100,24 @@ export interface TaskSnapshot {
   tasks: TaskRecord[];
 }
 
+export type TaskLifecycleEventType =
+  | 'task_queued'
+  | 'task_running'
+  | 'task_blocked'
+  | 'task_done'
+  | 'task_failed'
+  | 'task_cancelled';
+
+export interface TaskLifecycleEvent {
+  type: TaskLifecycleEventType;
+  taskId: string;
+  status: TaskStatus;
+  repoId: string;
+  sessionKey?: string;
+  at: string;
+  message: string;
+}
+
 export interface TaskProgressReport {
   taskId: string;
   status: TaskStatus;

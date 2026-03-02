@@ -1,11 +1,10 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { SerialQueue } from '../utils/queue.js';
 import type { RunnerCallbacks, InboundMessage } from '../shared/protocol.js';
 import type { AgentEngine } from '../engine/types.js';
 import type { AppConfig } from '../config.js';
 import { SessionStore } from './store.js';
 import { createLogger } from '../utils/logger.js';
+import { GITHUB_PR_URL_RE, hasVerifiedGitHubPrUrl, verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 
 interface SessionTranscriptEntry {
   role: 'user' | 'assistant';
@@ -33,37 +32,6 @@ interface SessionState {
   turnIndex: number;
   lastProcessedMessageId?: string;
 }
-
-const execFileAsync = promisify(execFile);
-
-const GITHUB_PR_URL_RE = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/gi;
-
-const verifyGitHubPullRequestUrl = async (url: string): Promise<boolean> => {
-  try {
-    await execFileAsync('gh', ['pr', 'view', url, '--json', 'url'], {
-      timeout: 10000,
-      windowsHide: true,
-      maxBuffer: 64 * 1024,
-      encoding: 'utf8',
-    });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const hasVerifiedGitHubPrUrl = async (text: string): Promise<boolean> => {
-  const matches = text.match(GITHUB_PR_URL_RE) || [];
-  if (matches.length === 0) return false;
-
-  for (const url of new Set(matches)) {
-    if (await verifyGitHubPullRequestUrl(url)) {
-      return true;
-    }
-  }
-
-  return false;
-};
 
 const DEFAULT_SUMMARY_PROMPT =
   `Summarize what happened in this conversation since the last user prompt. ` +
