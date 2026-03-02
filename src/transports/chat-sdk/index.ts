@@ -131,6 +131,9 @@ export class ChatSdkTransport implements ChatTransport {
   }
 
   private async startGatewayBridge() {
+    if (this.config.CHAT_TRANSPORT_PROVIDER === 'dual') {
+      return;
+    }
     if (!this.discordAdapter || !this.config.DISCORD_ENABLED || !this.config.DISCORD_TOKEN) {
       return;
     }
