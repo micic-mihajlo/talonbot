@@ -23,7 +23,7 @@ import { GitHubAutomation } from './github-automation.js';
 import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
-import { verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
+import { extractGitHubPullRequestUrls, verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -170,6 +170,8 @@ interface ParsedEngineOutput {
   prTitle?: string;
   prBody?: string;
   testOutput?: string;
+  prUrl?: string;
+  branch?: string;
 }
 
 interface TransitionInput {
@@ -788,6 +790,25 @@ export class TaskOrchestrator {
         );
       }
 
+      if (parsed.branch?.trim()) {
+        task.branch = parsed.branch.trim();
+      }
+
+      const currentPrUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+      if (parsed.prUrl && parsed.prUrl !== currentPrUrl) {
+        this.appendArtifact(
+          task,
+          {
+            kind: 'pull_request',
+            at: new Date().toISOString(),
+            prUrl: parsed.prUrl,
+            branch: task.branch,
+            summary: 'Worker supplied pull request URL.',
+          },
+          false,
+        );
+      }
+
       const changedFiles = await this.github.listChangedFiles(launched.path).catch(() => []);
       if (changedFiles.length > 0) {
         this.appendArtifact(
@@ -897,7 +918,8 @@ export class TaskOrchestrator {
 
       if (policy.requiresVerifiedPr) {
         const prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
-        const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl) : false;
+        const expectedHeadRefName = task.branch || this.latestArtifact(task, 'launcher')?.branch;
+        const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl, 10000, expectedHeadRefName) : false;
         if (!verified) {
           task.error = 'blocked: verified_pr_required';
           this.appendArtifact(
@@ -1208,11 +1230,29 @@ export class TaskOrchestrator {
     const trimmed = text.trim();
     const firstBrace = trimmed.indexOf('{');
     const lastBrace = trimmed.lastIndexOf('}');
+    const firstDetectedPrUrl = extractGitHubPullRequestUrls(trimmed)[0];
 
     if (firstBrace >= 0 && lastBrace > firstBrace) {
       const candidate = trimmed.slice(firstBrace, lastBrace + 1);
       try {
-        const parsed = JSON.parse(candidate) as ParsedEngineOutput;
+        const parsed = JSON.parse(candidate) as ParsedEngineOutput & Record<string, unknown>;
+        const rawPrUrl =
+          typeof parsed.prUrl === 'string'
+            ? parsed.prUrl
+            : typeof parsed.pullRequestUrl === 'string'
+              ? parsed.pullRequestUrl
+              : typeof parsed.url === 'string'
+                ? parsed.url
+                : '';
+        const parsedPrUrl = extractGitHubPullRequestUrls(`${rawPrUrl} ${trimmed}`)[0];
+        const parsedBranch =
+          typeof parsed.branch === 'string'
+            ? parsed.branch
+            : typeof parsed.headRefName === 'string'
+              ? parsed.headRefName
+              : typeof parsed.headBranch === 'string'
+                ? parsed.headBranch
+                : '';
         if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
           return {
             summary: parsed.summary.trim(),
@@ -1221,6 +1261,8 @@ export class TaskOrchestrator {
             prTitle: parsed.prTitle,
             prBody: parsed.prBody,
             testOutput: parsed.testOutput,
+            prUrl: parsedPrUrl,
+            branch: parsedBranch.trim() || undefined,
           };
         }
       } catch {
@@ -1231,6 +1273,7 @@ export class TaskOrchestrator {
     return {
       summary: trimmed || 'Worker produced no output.',
       state: 'done',
+      prUrl: firstDetectedPrUrl,
     };
   }
 
