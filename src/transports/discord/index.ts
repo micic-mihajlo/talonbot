@@ -123,9 +123,7 @@ export class DiscordTransport {
 
     this.outbox = new TransportOutbox(
       `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.discord`,
-      async (message) => {
-        await this.sendViaApi(message);
-      },
+      async (message) => this.sendViaApi(message),
       this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
       this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
       this.config.TRANSPORT_OUTBOX_MAX_RETRIES,

@@ -291,7 +291,7 @@ export class ChatSdkTransport implements ChatTransport {
       this.discordOutbox = new TransportOutbox(
         `${this.config.TRANSPORT_OUTBOX_STATE_FILE}.chat-sdk.discord`,
         async (payload) => {
-          await this.sendDiscord(payload);
+          return this.sendDiscord(payload);
         },
         this.config.TRANSPORT_OUTBOX_RETRY_BASE_MS,
         this.config.TRANSPORT_OUTBOX_RETRY_MAX_MS,
