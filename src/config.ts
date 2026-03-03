@@ -108,6 +108,7 @@ const schemaBase = z.object({
   DISCORD_PUBLIC_KEY: z.string().default(''),
   DISCORD_TYPING_ENABLED: bool.default(true),
   DISCORD_REACTIONS_ENABLED: bool.default(true),
+  DISCORD_CONTENT_MAX_CHARS: z.coerce.number().int().min(200).max(4000).default(2000),
   DISCORD_ALLOWED_CHANNELS: z.string().default(''),
   DISCORD_ALLOWED_GUILDS: z.string().default(''),
   DISCORD_ALLOWED_USERS: z.string().default(''),
