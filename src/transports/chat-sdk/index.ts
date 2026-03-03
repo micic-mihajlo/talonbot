@@ -10,6 +10,7 @@ import { createLogger } from '../../utils/logger.js';
 import type { ChatTransport, ChatTransportHealth } from '../chat-interface.js';
 import { TransportOutbox } from '../outbox.js';
 import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
+import { sendDiscordContentInChunks } from '../discord/chunking.js';
 import { fromWebhookResponse, toWebhookRequest } from './webhooks.js';
 import { parseThreadIdentity, toAdapterThreadId, toInboundMessage, type ChatSdkSource, type ThreadIdentity } from './mapper.js';
 
@@ -101,14 +102,23 @@ export class ChatSdkTransport implements ChatTransport {
   }
 
   private async sendDiscord(payload: OutboundPayload) {
-    if (!this.discordAdapter) throw new Error('chat_sdk_discord_not_ready');
+    const adapter = this.discordAdapter;
+    if (!adapter) throw new Error('chat_sdk_discord_not_ready');
     const identity: ThreadIdentity = {
       source: 'discord',
       channelId: payload.channelId,
       threadId: payload.threadId,
       guildId: payload.guildId || '@me',
     };
-    await this.discordAdapter.postMessage(toAdapterThreadId(identity), payload.text);
+    const threadId = toAdapterThreadId(identity);
+    const result = await sendDiscordContentInChunks(payload.text, async (chunk) => {
+      await adapter.postMessage(threadId, chunk);
+    });
+    return {
+      meta: {
+        chunks: result.chunks,
+      },
+    };
   }
 
   private async enqueueOutbound(source: ChatSdkSource, payload: OutboundPayload, explicitKey?: string) {

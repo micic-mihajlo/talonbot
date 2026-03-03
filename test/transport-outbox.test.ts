@@ -141,4 +141,37 @@ describe('transport outbox', () => {
     expect(attempts).toBe(2);
     await outbox.stop();
   });
+
+  it('logs sender metadata on successful send', async () => {
+    sandbox = await mkdtemp(path.join(tmpdir(), 'talon-outbox-'));
+
+    const infoLogs: unknown[] = [];
+    const outbox = new TransportOutbox<{ text: string }>(
+      path.join(sandbox, 'outbox.json'),
+      async () => ({ meta: { chunks: 3 } }),
+      50,
+      100,
+      2,
+      {
+        info: (_message, meta) => {
+          infoLogs.push(meta);
+        },
+        warn: () => {},
+        error: () => {},
+      },
+    );
+
+    await outbox.initialize();
+    await outbox.enqueue({
+      idempotencyKey: 'meta-msg',
+      payload: { text: 'hello' },
+    });
+
+    await waitFor(
+      () => infoLogs.some((entry) => (entry as { send?: { chunks?: number } })?.send?.chunks === 3),
+      3000,
+    );
+    expect(infoLogs.some((entry) => (entry as { send?: { chunks?: number } })?.send?.chunks === 3)).toBe(true);
+    await outbox.stop();
+  });
 });

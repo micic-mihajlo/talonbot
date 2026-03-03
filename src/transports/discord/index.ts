@@ -8,6 +8,7 @@ import { isAllowedDiscord } from '../guards.js';
 import { config as envConfig } from '../../config.js';
 import { TransportOutbox } from '../outbox.js';
 import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
+import { sendDiscordContentInChunks } from './chunking.js';
 
 const logger = createLogger('transports.discord', envConfig.LOG_LEVEL as any);
 
@@ -63,7 +64,14 @@ export class DiscordTransport {
     if (!channel || !('send' in channel) || typeof (channel as any).send !== 'function') {
       throw new Error(`discord_channel_send_not_available:${targetId}`);
     }
-    await (channel as any).send({ content: message.text });
+    const result = await sendDiscordContentInChunks(message.text, async (chunk) => {
+      await (channel as any).send({ content: chunk });
+    });
+    return {
+      meta: {
+        chunks: result.chunks,
+      },
+    };
   }
 
   private async enqueueOutbound(prefix: string, message: { channelId: string; threadId?: string; text: string }) {
