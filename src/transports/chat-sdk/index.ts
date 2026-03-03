@@ -10,7 +10,7 @@ import { createLogger } from '../../utils/logger.js';
 import type { ChatTransport, ChatTransportHealth } from '../chat-interface.js';
 import { TransportOutbox } from '../outbox.js';
 import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
-import { sendDiscordContentInChunks } from '../discord/chunking.js';
+import { chunkDiscordContent } from '../discord/chunking.js';
 import { fromWebhookResponse, toWebhookRequest } from './webhooks.js';
 import { parseThreadIdentity, toAdapterThreadId, toInboundMessage, type ChatSdkSource, type ThreadIdentity } from './mapper.js';
 
@@ -111,12 +111,10 @@ export class ChatSdkTransport implements ChatTransport {
       guildId: payload.guildId || '@me',
     };
     const threadId = toAdapterThreadId(identity);
-    const result = await sendDiscordContentInChunks(payload.text, async (chunk) => {
-      await adapter.postMessage(threadId, chunk);
-    });
+    await adapter.postMessage(threadId, payload.text);
     return {
       meta: {
-        chunks: result.chunks,
+        chunks: 1,
       },
     };
   }
@@ -133,12 +131,20 @@ export class ChatSdkTransport implements ChatTransport {
       return;
     }
     if (!this.discordOutbox) throw new Error('chat_sdk_discord_outbox_not_ready');
-    await this.discordOutbox.enqueue({
-      idempotencyKey:
-        explicitKey?.trim() ||
-        `chat-sdk:discord:${payload.channelId}:${payload.threadId || 'main'}:${payload.guildId || 'na'}:${Date.now()}:${payload.text}`,
-      payload,
-    });
+    const baseKey =
+      explicitKey?.trim() ||
+      `chat-sdk:discord:${payload.channelId}:${payload.threadId || 'main'}:${payload.guildId || 'na'}:${Date.now()}:${payload.text}`;
+    const chunks = chunkDiscordContent(payload.text);
+    const total = chunks.length;
+    for (let idx = 0; idx < total; idx += 1) {
+      await this.discordOutbox.enqueue({
+        idempotencyKey: `${baseKey}:chunk:${idx + 1}/${total}`,
+        payload: {
+          ...payload,
+          text: chunks[idx],
+        },
+      });
+    }
   }
 
   private async startGatewayBridge() {

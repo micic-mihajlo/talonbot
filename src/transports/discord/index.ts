@@ -8,7 +8,7 @@ import { isAllowedDiscord } from '../guards.js';
 import { config as envConfig } from '../../config.js';
 import { TransportOutbox } from '../outbox.js';
 import { EventDedupeGuard, inboundDedupeKey } from '../event-dedupe.js';
-import { sendDiscordContentInChunks } from './chunking.js';
+import { chunkDiscordContent } from './chunking.js';
 
 const logger = createLogger('transports.discord', envConfig.LOG_LEVEL as any);
 
@@ -64,13 +64,9 @@ export class DiscordTransport {
     if (!channel || !('send' in channel) || typeof (channel as any).send !== 'function') {
       throw new Error(`discord_channel_send_not_available:${targetId}`);
     }
-    const result = await sendDiscordContentInChunks(message.text, async (chunk) => {
-      await (channel as any).send({ content: chunk });
-    });
+    await (channel as any).send({ content: message.text });
     return {
-      meta: {
-        chunks: result.chunks,
-      },
+      meta: { chunks: 1 },
     };
   }
 
@@ -79,10 +75,19 @@ export class DiscordTransport {
       throw new Error('discord_outbox_not_ready');
     }
 
-    await this.outbox.enqueue({
-      idempotencyKey: this.outboxKey(prefix, message),
-      payload: message,
-    });
+    const chunks = chunkDiscordContent(message.text);
+    const total = chunks.length;
+    for (let idx = 0; idx < total; idx += 1) {
+      const chunkPayload = {
+        channelId: message.channelId,
+        threadId: message.threadId,
+        text: chunks[idx],
+      };
+      await this.outbox.enqueue({
+        idempotencyKey: `${this.outboxKey(prefix, message)}:chunk:${idx + 1}/${total}`,
+        payload: chunkPayload,
+      });
+    }
   }
 
   private async enqueueOutboundWithKey(
@@ -94,12 +99,22 @@ export class DiscordTransport {
       throw new Error('discord_outbox_not_ready');
     }
 
-    await this.outbox.enqueue({
-      idempotencyKey: explicitKey?.trim()
-        ? `${prefix}:${explicitKey.trim()}`
-        : this.outboxKey(prefix, message),
-      payload: message,
-    });
+    const baseKey = explicitKey?.trim()
+      ? `${prefix}:${explicitKey.trim()}`
+      : this.outboxKey(prefix, message);
+    const chunks = chunkDiscordContent(message.text);
+    const total = chunks.length;
+
+    for (let idx = 0; idx < total; idx += 1) {
+      await this.outbox.enqueue({
+        idempotencyKey: `${baseKey}:chunk:${idx + 1}/${total}`,
+        payload: {
+          channelId: message.channelId,
+          threadId: message.threadId,
+          text: chunks[idx],
+        },
+      });
+    }
   }
 
   async start() {
