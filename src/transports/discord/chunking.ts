@@ -1,4 +1,4 @@
-export const DISCORD_CONTENT_HARD_LIMIT = 4000;
+export const DISCORD_CONTENT_HARD_LIMIT = 2000;
 
 const findSafeSplitIndex = (segment: string) => {
   const paragraphBreaks = [...segment.matchAll(/\r?\n\r?\n/g)];

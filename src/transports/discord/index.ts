@@ -75,7 +75,7 @@ export class DiscordTransport {
       throw new Error('discord_outbox_not_ready');
     }
 
-    const chunks = chunkDiscordContent(message.text);
+    const chunks = chunkDiscordContent(message.text, this.config.DISCORD_CONTENT_MAX_CHARS);
     const total = chunks.length;
     for (let idx = 0; idx < total; idx += 1) {
       const chunkPayload = {
@@ -102,7 +102,7 @@ export class DiscordTransport {
     const baseKey = explicitKey?.trim()
       ? `${prefix}:${explicitKey.trim()}`
       : this.outboxKey(prefix, message);
-    const chunks = chunkDiscordContent(message.text);
+    const chunks = chunkDiscordContent(message.text, this.config.DISCORD_CONTENT_MAX_CHARS);
     const total = chunks.length;
 
     for (let idx = 0; idx < total; idx += 1) {

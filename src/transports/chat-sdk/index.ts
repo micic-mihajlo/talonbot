@@ -134,7 +134,7 @@ export class ChatSdkTransport implements ChatTransport {
     const baseKey =
       explicitKey?.trim() ||
       `chat-sdk:discord:${payload.channelId}:${payload.threadId || 'main'}:${payload.guildId || 'na'}:${Date.now()}:${payload.text}`;
-    const chunks = chunkDiscordContent(payload.text);
+    const chunks = chunkDiscordContent(payload.text, this.config.DISCORD_CONTENT_MAX_CHARS);
     const total = chunks.length;
     for (let idx = 0; idx < total; idx += 1) {
       await this.discordOutbox.enqueue({
