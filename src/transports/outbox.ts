@@ -21,6 +21,10 @@ interface PersistedOutbox<TPayload> {
   records: Array<TransportOutboxEnvelope<TPayload>>;
 }
 
+export interface TransportOutboxSendResult {
+  meta?: Record<string, unknown>;
+}
+
 const defaultPayload = <TPayload>(): PersistedOutbox<TPayload> => ({
   version: 1,
   records: [],
@@ -45,7 +49,7 @@ export class TransportOutbox<TPayload> {
 
   constructor(
     private readonly stateFile: string,
-    private readonly sender: (payload: TPayload) => Promise<void>,
+    private readonly sender: (payload: TPayload) => Promise<void | TransportOutboxSendResult>,
     private readonly retryBaseMs: number,
     private readonly retryMaxMs: number,
     private readonly maxRetries: number,
@@ -163,13 +167,18 @@ export class TransportOutbox<TPayload> {
     if (!record) return;
 
     try {
-      await this.sender(record.payload);
+      const sendResult = await this.sender(record.payload);
       record.status = 'sent';
       record.attempts += 1;
       record.updatedAt = new Date().toISOString();
       record.lastError = undefined;
       await this.persistSafe();
-      this.logger.info('transport outbox sent', { id: record.id, key: record.idempotencyKey, attempts: record.attempts });
+      this.logger.info('transport outbox sent', {
+        id: record.id,
+        key: record.idempotencyKey,
+        attempts: record.attempts,
+        ...(sendResult?.meta ? { send: sendResult.meta } : {}),
+      });
       return;
     } catch (error) {
       record.attempts += 1;
