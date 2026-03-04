@@ -182,7 +182,7 @@ export class QmdMemoryProvider implements MemoryProvider {
       this.options.logger.warn('memory_qmd_fallback', {
         reason: this.fallbackReason,
       });
-      return baseline;
+      return this.markdown.readBootContext({ ...input, limitBytes });
     }
   }
 
