@@ -1,31 +1,41 @@
-# Talonbot
+<p align="center">
+  <img src="docs/assets/talonbot-logo.png" alt="Talonbot logo" width="240" />
+</p>
 
-`talonbot` is a Linux-first, always-on software-engineer agent runner with:
+<h1 align="center">Talonbot</h1>
 
-- Slack ingress (Socket Mode)
-- Discord ingress
-- Optional Chat SDK transport backend (`legacy` / `chat_sdk` / `dual`) with Redis-backed state
-- Per-route session queues and persistent context
-- Operator control surface (HTTP + Unix socket)
-- Pluggable local execution engine (mock mode included)
-- Multi-agent task orchestration with worker lifecycle state
-- Optional sentry supervisor for escalations and incident tracking
-- Pluggable memory backends (`local` markdown or `qmd` semantic retrieval)
-- Repo registry + isolated git worktree execution pipeline
-- Release snapshots with atomic activation + rollback
-- Security audit, log redaction/retention, and diagnostics bundle generation
+<p align="center">
+  Always-on AI engineering teammate for Linux, Slack, and Discord.
+</p>
 
-## Repository structure
+Talonbot is a Linux-first agent runtime that turns chat messages into tracked engineering tasks with evidence-backed completion.
 
-- `src/shared/*` protocol contracts and transport-agnostic payloads
-- `src/control/*` session and route orchestration
-- `src/engine/*` pluggable execution strategy
-- `src/transports/{slack,discord}` message ingress adapters
-- `src/runtime/{http,socket}.ts` control interfaces
+You can message it from Slack/Discord, it runs work in isolated git worktrees, and it posts lifecycle updates back in-thread.
 
-## 3-command quickstart (local, no API keys)
+## Why Talonbot
 
-No Slack/Discord credentials required. The bootstrap installs source into `~/.talonbot/src` and a `talonbot` wrapper into `~/.local/bin`.
+- 24/7 daemon runtime on Linux (`systemd`-friendly)
+- Task-first chat flow with lifecycle updates: queued, running, blocked, done
+- Intent-aware completion policy:
+  - `implementation` requests can require verified PR evidence
+  - `research/review/summarize` requests complete on summary artifacts
+- Isolated repo execution pipeline with worktree cleanup and worker supervision
+- Durable transport outbox with retry/backoff/poison handling
+- Strict startup integrity checks and release rollback operations
+- Memory backends:
+  - local markdown memory (`MEMORY_PROVIDER=local`)
+  - semantic recall with local QMD (`MEMORY_PROVIDER=qmd`)
+
+## How it works
+
+1. Inbound chat event is normalized (Slack/Discord).
+2. Control plane routes request to `task` or `session`.
+3. Task orchestration assigns a worker and isolated repo worktree.
+4. Engine executes (mock/process/session mode).
+5. Artifacts are verified (summary/branch/commit/PR policy).
+6. Status updates are posted back to the same chat thread.
+
+## Quickstart (local, 3 commands)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/micic-mihajlo/talonbot/main/bootstrap.sh | bash
@@ -33,321 +43,117 @@ talonbot install
 npm run start
 ```
 
-`talonbot install` is idempotent: it reuses `.env`, generates `CONTROL_AUTH_TOKEN` when missing, installs dependencies, and rebuilds safely.
+Defaults after startup:
 
-Control plane defaults after startup:
+- HTTP control API: `http://127.0.0.1:8080`
+- Unix socket: `~/.local/share/talonbot/control.sock`
 
-- Unix socket: `${CONTROL_SOCKET_PATH}` (default `~/.local/share/talonbot/control.sock`)
-- HTTP: `http://127.0.0.1:8080`
-
-For an always-on Linux host with systemd:
+## Quickstart (Linux daemon / VPS)
 
 ```bash
+talonbot setup --admin-user <admin-user> --runtime-user talonbot
 talonbot install --daemon --doctor
 ```
 
-## Optional: quick web scraping with Scrapling
-
-`talonbot` can bootstrap a local Scrapling Python environment on first use:
+If you want real process-engine execution with `pi`:
 
 ```bash
-talonbot scrape https://example.com
-talonbot scrape https://example.com --selector 'h1'
-```
-
-It installs Scrapling into `~/.local/share/talonbot/scrapling-venv` automatically.
-
-## Discord-first quickstart
-
-If Discord is your primary transport:
-
-```bash
-cd /path/to/talonbot
-cp systemd/talonbot.env.template .env
-# edit .env:
-# DISCORD_ENABLED=true
-# DISCORD_TOKEN=your-discord-bot-token
-# CHAT_DISPATCH_MODE=task
-# CONTROL_AUTH_TOKEN=choose-a-long-random-string
-./install.sh --start
-```
-
-Invite the bot with standard message permissions (`Read Messages`, `Send Messages`), then run:
-
-```bash
-curl -s http://localhost:8080/sessions
-```
-
-You should see active sessions appear once messages are received.
-
-## Quick smoke checks
-
-```bash
-curl -s http://localhost:8080/health
-curl -s http://localhost:8080/status
-curl -s http://localhost:8080/sessions
-curl -s -H "Content-Type: application/json" -d '{"source":"discord","channelId":"local","text":"hello bot","senderId":"you"}' http://localhost:8080/dispatch
-```
-
-You should get an accepted response from `/dispatch` and a reply text in logs/JSON.
-
-When `CHAT_DISPATCH_MODE=task` (default), non-command Discord/Slack messages queue orchestration tasks and stream task lifecycle updates back to the same thread. Use `chat: ...` (or `/chat ...`) to force plain conversational session mode for a single message.
-
-Task completion policy is intent-aware:
-
-- `implementation` intent: requires verified PR evidence when policy is enabled (`CHAT_REQUIRE_VERIFIED_PR=true`).
-- `review`, `research`, `summarize`, `ops`, `unknown`: complete when required artifacts are present (summary by default).
-- explicit overrides can be passed in `/dispatch` metadata:
-  - `taskIntent`
-  - `requiresVerifiedPr` / `requirePrOverride`
-  - `requiredArtifacts`
-
-Examples:
-
-- `Implement API contract validation for new endpoint` → terminal proof requires PR.
-- `Research rollout risks in this repo` → terminal proof requires summary.
-
-Strict mode defaults:
-
-- task intent policy defaults to `CHAT_REQUIRE_VERIFIED_PR=true` for implementation requests.
-- running/blocked/terminal task updates are posted through transport outboxes with retry/backoff
-- notifier bindings survive restart and resume lifecycle updates for in-flight tasks
-
-Semantic memory modes:
-
-- `MEMORY_PROVIDER=local` keeps markdown-only memory context (`<DATA_DIR>/memory/*.md`).
-- `MEMORY_PROVIDER=qmd` keeps markdown as source of truth and adds semantic recall snippets via local `qmd` CLI.
-- If qmd lookup fails, Talonbot falls back to markdown-only memory without failing the task.
-
-Transport provider modes:
-
-- `CHAT_TRANSPORT_PROVIDER=legacy` keeps existing Slack Bolt + Discord gateway transports.
-- `CHAT_TRANSPORT_PROVIDER=chat_sdk` runs Chat SDK transport only (Redis required).
-- `CHAT_TRANSPORT_PROVIDER=dual` runs both stacks with cross-stack dedupe guard; primary outbound can stay legacy unless `CHAT_SDK_DISABLE_LEGACY_OUTBOUND=true`.
-
-Run health/config sanity checks locally with:
-
-```bash
-npm run doctor
-npm run cli -- operator
-```
-
-## P0 CI gates
-
-Pull requests and `main` pushes are gated on these required checks:
-
-1. `build` (`npm run build`)
-2. `lint` (`npm run lint`)
-3. `typecheck` (`npm run typecheck`)
-4. `tests` (`npm test`)
-5. `smoke` (`npm run test:smoke`)
-
-Run the same gate sequence locally with:
-
-```bash
-npm run ci:p0
-```
-
-Enable one transport when you’re ready to connect real chat:
-
-- `SLACK_ENABLED=true` plus Slack tokens
-- `DISCORD_ENABLED=true` plus Discord token
-
-## Control API
-
-`CONTROL_HTTP_PORT` can be changed; default is `8080` in the template.
-
-### Startup checks
-
-- Strict config schema is validated before runtime init.
-- Unknown keys in `.env` fail fast (override env file path with `TALONBOT_ENV_FILE`), except vetted external engine/provider prefixes (for example `PI_*`, `OPENAI_*`, `CODEX_*`).
-- `engine`: errors if `ENGINE_MODE=process` but `ENGINE_COMMAND` is empty.
-- `slack`: errors if `SLACK_ENABLED=true` without required Slack secrets.
-- `discord`: errors if `DISCORD_ENABLED=true` without `DISCORD_TOKEN`.
-- `orchestration`: errors if `TASK_AUTO_PR=true` and `TASK_AUTO_COMMIT=false`.
-- `control-plane`: warns if `CONTROL_AUTH_TOKEN` is missing.
-- `storage` / `socket`: validates writable runtime directories.
-- `runtime`: warns if running as root.
-
-Run with a non-zero `CONTROL_AUTH_TOKEN` (and at least 24 chars) for production-like control-plane usage.
-
-### Secret backend options
-
-Secrets can be loaded from:
-
-- direct env value (`KEY=value`, default),
-- a file (`KEY_FILE=/absolute/path`),
-- a command (`KEY_COMMAND=["/absolute/executable","arg1"]`).
-
-Optional selector: `KEY_BACKEND=env|file|command`.
-
-Supported keys: `CONTROL_AUTH_TOKEN`, `BRIDGE_SHARED_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `DISCORD_TOKEN`.
-
-Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_ALLOW_COMMAND=true`.
-
-- `GET /health`
-- `GET /status`
-- `POST /chat-sdk/webhooks/slack`, `POST /chat-sdk/webhooks/discord`
-- `GET /sessions`
-- `GET /aliases`
-- `POST /dispatch` or `POST /send`
-- `POST /stop`
-- `POST /alias` with action `set|unset|resolve|list`
-- `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `GET /tasks/:id/report`, `POST /tasks/:id/retry`, `POST /tasks/:id/cancel`
-- `GET /workers`, `POST /workers/cleanup`, `POST /workers/:session/stop`
-- `GET /repos`, `POST /repos/register`, `POST /repos/remove`
-- `POST /bridge/envelope`, `POST /webhook/github`
-- `GET /bridge/status`
-- `GET /sentry/status`
-- `GET /release/status`, `POST /release/update`, `POST /release/rollback`
-- `POST /audit`, `POST /diagnostics/bundle`
-
-`/status` includes orchestration health diagnostics (orphaned workers, stuck tasks, stale worktrees).
-`/tasks` and `/tasks/:id` include artifact-gated progress reports, and `/tasks/:id/report` returns report-only output.
-
-`/diagnostics/bundle` now includes:
-
-- task binding recovery state
-- startup reconciliation snapshot
-- transport outbox states (`.discord` / `.slack`)
-- transport stack status snapshot (`transport-status.json`)
-- memory provider status snapshot (`memory-status.json`)
-
-Example:
-
-```bash
-curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" \
-  -d '{"source":"discord","channelId":"12345","text":"run lint","senderId":"ops"}' \
-  http://localhost:8080/dispatch
-
-Alias maintenance:
-```
-
-```bash
-curl -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"set","alias":"feature-chat","sessionKey":"discord:12345:main"}' \
-  http://localhost:8080/alias
-```
-```
-
-## Socket control
-
-A Unix socket is always created at `${CONTROL_SOCKET_PATH}`.
-Send one JSON command per line:
-
-- `{"action":"send","source":"discord","channelId":"123","text":"status"}`
-- `{"action":"stop","sessionKey":"discord:123:main"}`
-- `{"action":"list"}`
-- `{"action":"health"}`
-
-
-## Queue and dedupe
-
-- Per-route queue: `MAX_QUEUE_PER_SESSION`
-- Queue overflow drops oldest pending event.
-- Duplicate message suppression uses `SESSION_DEDUPE_WINDOW_MS`.
-
-## Runtime directories
-
-Session data lives under:
-
-- `<DATA_DIR>/sessions/<hashed-session>/log.jsonl`
-- `<DATA_DIR>/sessions/<hashed-session>/context.jsonl`
-- `<DATA_DIR>/sessions/<hashed-session>/state.json`
-
-## Production
-
-Use `INSTALL.md` for a basic `systemd` bootstrap.
-
-### Linux VPS (process engine) checklist
-
-```bash
-talonbot install --daemon --doctor
 npm install -g @mariozechner/pi-coding-agent
 talonbot env set ENGINE_MODE process
 talonbot env set ENGINE_COMMAND "$(command -v pi)"
 talonbot env set ENGINE_ARGS "-p --no-session --no-extensions --no-skills --no-prompt-templates --no-themes --no-tools"
 talonbot env set PI_SKIP_VERSION_CHECK 1
 sudo systemctl restart talonbot.service
-talonbot operator
 ```
 
-Then verify health and worker/runtime status with authenticated API calls:
+## First smoke test
 
 ```bash
-curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/health | jq
-curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/workers | jq
+curl -s http://127.0.0.1:8080/health
+curl -s http://127.0.0.1:8080/status
+curl -s -H "Content-Type: application/json" \
+  -d '{"source":"discord","channelId":"local","text":"hello bot","senderId":"you"}' \
+  http://127.0.0.1:8080/dispatch
 ```
 
-## Operator CLI
+## Transport modes
 
-Daemon installs place a global `talonbot` command in `/usr/local/bin/talonbot`.
+- `CHAT_TRANSPORT_PROVIDER=legacy`
+  - legacy Slack Bolt + Discord gateway transports
+- `CHAT_TRANSPORT_PROVIDER=chat_sdk`
+  - Chat SDK transport only (Redis required)
+- `CHAT_TRANSPORT_PROVIDER=dual`
+  - both stacks with cross-stack dedupe guard
 
-```bash
-npm run cli -- status
-npm run cli -- status --api
-npm run cli -- doctor
-npm run cli -- operator
-npm run cli -- operator --json
-npm run cli -- env set CONTROL_AUTH_TOKEN your-long-token
-npm run cli -- env get CONTROL_AUTH_TOKEN
-npm run cli -- repos register --id my-repo --path ~/workspace/my-repo --default true
-npm run cli -- tasks create --repo my-repo --text "Implement endpoint hardening"
-npm run cli -- tasks list
-npm run cli -- workers list
-npm run cli -- attach --session discord:12345:main
-npm run cli -- deploy --source /path/to/talonbot
-npm run cli -- rollback previous
-npm run cli -- audit
-npm run cli -- bundle --output /tmp
-npm run cli -- uninstall --force
-```
+## Memory modes
 
-Diagnostics bundles now include worker-plane/runtime artifacts (`workers.json`, `orchestration-health.json`) alongside sessions/tasks/release/audit data.
+- `MEMORY_PROVIDER=local`
+  - markdown memory only
+- `MEMORY_PROVIDER=qmd`
+  - markdown baseline + semantic recall snippets via local `qmd` CLI
+  - fail-open fallback to markdown-only if qmd lookup fails
 
-Equivalent direct usage (after daemon install):
+## Operator commands
 
 ```bash
-talonbot install
 talonbot status
 talonbot operator
+talonbot doctor
 talonbot tasks list
-```
-
-## Troubleshooting quick hits
-
-- `talonbot status` shows service errors:
-  - Run `talonbot status --api` to bypass `systemctl` fallback and check API reachability directly.
-  - Run `talonbot operator` for a combined health/release/sentry snapshot.
-- `talonbot: command not found` after bootstrap:
-  - Add `~/.local/bin` to your shell `PATH`.
-  - Re-run bootstrap: `curl -fsSL https://raw.githubusercontent.com/micic-mihajlo/talonbot/main/bootstrap.sh | bash`.
-- `talonbot doctor` reports startup errors:
-  - Follow remediation text attached to each issue.
-  - Re-run with runtime probe: `npm run doctor -- --strict --runtime-url http://127.0.0.1:8080 --runtime-token "$CONTROL_AUTH_TOKEN"`.
-- Deploy or rollback fails:
-  - Verify release state with `curl -s -H "Authorization: Bearer $CONTROL_AUTH_TOKEN" http://127.0.0.1:8080/release/status`.
-  - Inspect service logs: `journalctl -u talonbot.service -f`.
-
-## Strict Linux runtime profile
-
-Production profile now defaults to strict fail-closed startup checks.
-
-- `STARTUP_INTEGRITY_MODE=strict` is the default.
-- Runtime expects a dedicated user (`RUNTIME_EXPECTED_USER`, default `talonbot`).
-- Daemon mode runs from immutable releases under `/opt/talonbot/current`.
-- Health-verified release activation is handled by `bin/update-release.sh` and `bin/rollback-release.sh`.
-
-## Host setup and release operations
-
-```bash
-talonbot setup --admin-user <admin-user> --runtime-user talonbot
-talonbot install --daemon --doctor
+talonbot workers list
+talonbot audit
 talonbot update --source /path/to/talonbot
 talonbot rollback previous
 ```
 
-The `e2e-process` workflow is required and runs on self-hosted labels `self-hosted,linux,pi`.
+## API surface (most-used)
 
-Note: on hardened VPS installs, `setup`, `update`, and `rollback` are privileged operations and should be run with `sudo`.
+- `GET /health`
+- `GET /status`
+- `POST /dispatch`
+- `GET /tasks`
+- `GET /tasks/:id`
+- `GET /tasks/:id/report`
+- `POST /tasks/:id/retry`
+- `POST /tasks/:id/cancel`
+- `GET /workers`
+- `GET /repos`
+- `POST /diagnostics/bundle`
+
+## CI quality gates
+
+Required checks include:
+
+- `build`
+- `lint`
+- `typecheck`
+- `tests`
+- `smoke`
+- `e2e-process` (self-hosted runner labels: `self-hosted,linux,pi`)
+
+Run local p0 gate sequence:
+
+```bash
+npm run ci:p0
+```
+
+## Docs map
+
+- Install and Linux host setup: `INSTALL.md`
+- Full config reference: `CONFIGURATION.md`
+- Architecture details: `architecture.md`
+- Ops runbook: `operations.md`
+- Workflow semantics: `workflow.md`
+- Security posture: `SECURITY.md`
+
+## Notes for contributors
+
+- Task-first mode is default for transport messages.
+- Use `chat: ...` or `/chat ...` to force plain conversational session mode.
+- Keep commit messages free of banned naming constraints in this repo.
+
+## Logo asset
+
+Place the logo file at:
+
+`docs/assets/talonbot-logo.png`
