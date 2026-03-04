@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { buildEngine } from '../engine/index.js';
 import type { AgentEngine } from '../engine/types.js';
 import type { AppConfig } from '../config.js';
@@ -188,6 +190,18 @@ const splitShellArgs = (args: string) =>
         .match(/(?:"[^"]*"|[^\s"]+)/g)
         ?.map((value) => value.replace(/^"(.*)"$/, '$1')) ?? []
     : [];
+const execFileAsync = promisify(execFile);
+const MAX_INFRA_REPAIR_ATTEMPTS = 1;
+const REPAIRABLE_INFRA_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bnot found\b/i,
+  /\bcommand not found\b/i,
+  /\bENOENT\b/i,
+  /\bCannot find module\b/i,
+  /\bnpm ERR!\b/i,
+  /\byarn: not found\b/i,
+  /\bpnpm: not found\b/i,
+  /\bvitest: not found\b/i,
+];
 
 interface ParsedEngineOutput {
   summary: string;
@@ -800,6 +814,20 @@ export class TaskOrchestrator {
       });
       await this.persist();
 
+      const preflight = await this.runWorkerPreflight(task, launched.path, false);
+      if (preflight.details.length > 0) {
+        task.events.push({
+          at: new Date().toISOString(),
+          kind: 'worker_preflight',
+          message: preflight.repaired ? 'Worker preflight repaired worktree dependencies.' : 'Worker preflight checks passed.',
+          details: toEventDetails({
+            repaired: preflight.repaired,
+            details: preflight.details,
+          }),
+        });
+        await this.persist();
+      }
+
       const memoryContext = await this.memory.readBootContext({
         taskId: task.id,
         taskText: task.text,
@@ -1088,9 +1116,51 @@ export class TaskOrchestrator {
       await this.persist();
       this.updateParentState(task);
     } catch (error) {
+      const errorMessage = stringifyUnknownError(error);
+      const repairAttempts = this.countInfraRepairAttempts(task);
+      if (
+        repo &&
+        launchedPath &&
+        repairAttempts < MAX_INFRA_REPAIR_ATTEMPTS &&
+        this.isRepairableInfraError(errorMessage) &&
+        !task.cancelRequested
+      ) {
+        task.events.push({
+          at: new Date().toISOString(),
+          kind: 'infra_repair_attempt',
+          message: `Detected repairable infrastructure failure. Attempting self-heal (${repairAttempts + 1}/${MAX_INFRA_REPAIR_ATTEMPTS}).`,
+          details: toEventDetails({
+            error: errorMessage,
+          }),
+        });
+        try {
+          const repair = await this.runWorkerPreflight(task, launchedPath, true);
+          if (repair.repaired) {
+            this.transitionTask(task, {
+              to: 'queued',
+              kind: 'infra_repair_retry',
+              message: `Recovered infrastructure issue and scheduled retry: ${errorMessage}`,
+              details: toEventDetails({
+                details: repair.details,
+              }),
+            });
+            this.queue.push(task.id);
+            await this.persist();
+            this.updateParentState(task);
+            return;
+          }
+        } catch (repairError) {
+          task.events.push({
+            at: new Date().toISOString(),
+            kind: 'infra_repair_failed',
+            message: `Infrastructure self-heal failed: ${stringifyUnknownError(repairError)}`,
+          });
+        }
+      }
+
       task.retryCount += 1;
       task.updatedAt = new Date().toISOString();
-      task.error = stringifyUnknownError(error);
+      task.error = errorMessage;
       this.appendArtifact(
         task,
         {
@@ -1322,6 +1392,65 @@ export class TaskOrchestrator {
       return this.config.ENGINE_TIMEOUT_MS;
     }
     return normalizeTimeoutMs(task.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS);
+  }
+
+  private async pathExists(targetPath: string) {
+    return fs
+      .access(targetPath)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  private isRepairableInfraError(message: string) {
+    return REPAIRABLE_INFRA_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+  }
+
+  private countInfraRepairAttempts(task: TaskRecord) {
+    return task.events.filter((event) => event.kind === 'infra_repair_attempt').length;
+  }
+
+  private async ensureCommandAvailable(command: string, cwd: string) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(command)) {
+      throw new Error(`unsupported_command_name:${command}`);
+    }
+    await execFileAsync('which', [command], {
+      cwd,
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+  }
+
+  private async runWorkerPreflight(task: TaskRecord, worktreePath: string, forceDependencyInstall = false) {
+    const details: string[] = [];
+    await this.ensureCommandAvailable('git', worktreePath);
+    await this.ensureCommandAvailable('node', worktreePath);
+    await this.ensureCommandAvailable('npm', worktreePath);
+    if (this.config.TASK_AUTO_PR) {
+      await this.ensureCommandAvailable('gh', worktreePath);
+    }
+
+    const hasPackageJson = await this.pathExists(path.join(worktreePath, 'package.json'));
+    if (!hasPackageJson) {
+      return { repaired: false, details };
+    }
+
+    const hasNodeModules = await this.pathExists(path.join(worktreePath, 'node_modules'));
+    if (hasNodeModules && !forceDependencyInstall) {
+      details.push('node_modules already present');
+      return { repaired: false, details };
+    }
+
+    const hasPackageLock = await this.pathExists(path.join(worktreePath, 'package-lock.json'));
+    const npmArgs = hasPackageLock ? ['ci', '--no-audit', '--no-fund'] : ['install', '--no-audit', '--no-fund'];
+    const timeoutMs = Math.max(60_000, Math.min(this.resolveTaskTimeoutMs(task), 5 * 60 * 1000));
+
+    await execFileAsync('npm', npmArgs, {
+      cwd: worktreePath,
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    details.push(`ran npm ${npmArgs[0]} in worktree`);
+    return { repaired: true, details };
   }
 
   private parseEngineOutput(text: string): ParsedEngineOutput {
