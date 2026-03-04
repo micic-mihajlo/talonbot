@@ -210,6 +210,7 @@ const run = async () => {
             health: transport.health(),
           })),
         }),
+        memoryStatus: () => taskOrchestrator.getMemoryStatus(),
       },
     );
     runtimeHandles.push({
