@@ -54,6 +54,7 @@ export class QmdMemoryProvider implements MemoryProvider {
   private fallbackReason = '';
   private lastRetrievalMs = 0;
   private lastSnippetCount = 0;
+  private hasRetrieval = false;
 
   constructor(
     private readonly markdown: MarkdownMemoryProvider,
@@ -158,6 +159,7 @@ export class QmdMemoryProvider implements MemoryProvider {
     }
 
     try {
+      this.hasRetrieval = true;
       const output = await this.runQmd(query);
       const snippets = parseQmdOutput(output, this.options.minScore).slice(0, this.options.maxSnippets);
       this.lastSnippetCount = snippets.length;
@@ -202,8 +204,8 @@ export class QmdMemoryProvider implements MemoryProvider {
       provider: 'qmd',
       healthy: this.healthy,
       fallbackReason: this.fallbackReason || undefined,
-      lastRetrievalMs: this.lastRetrievalMs || undefined,
-      lastSnippetCount: this.lastSnippetCount || undefined,
+      lastRetrievalMs: this.hasRetrieval ? this.lastRetrievalMs : undefined,
+      lastSnippetCount: this.hasRetrieval ? this.lastSnippetCount : undefined,
       mode: this.healthy ? 'hybrid' : 'fallback-local',
     };
   }
