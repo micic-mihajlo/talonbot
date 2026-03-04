@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { AppConfig } from '../config.js';
+import { expandPath } from '../utils/path.js';
 import type {
   MemoryBootContextInput,
   MemoryFile,
@@ -30,7 +31,7 @@ export class TeamMemory {
         command: config.QMD_COMMAND,
         args: config.QMD_ARGS,
         timeoutMs: config.QMD_TIMEOUT_MS,
-        workspaceDir: config.QMD_WORKSPACE_DIR,
+        workspaceDir: expandPath(config.QMD_WORKSPACE_DIR),
         maxSnippets: config.QMD_MAX_SNIPPETS,
         maxContextBytes: config.QMD_MAX_CONTEXT_BYTES,
         minScore: config.QMD_MIN_SCORE,
@@ -76,4 +77,3 @@ export class TeamMemory {
     return path.resolve(this.rootDir);
   }
 }
-
