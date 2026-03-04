@@ -106,6 +106,7 @@ export class TaskUpdateNotifier {
   private readonly inFlight = new Set<string>();
   private timer?: ReturnType<typeof setInterval>;
   private unsubLifecycle?: () => void;
+  private stopping = false;
 
   constructor(
     private readonly store: SessionStore,
@@ -155,6 +156,7 @@ export class TaskUpdateNotifier {
   }
 
   async stop() {
+    this.stopping = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -162,6 +164,10 @@ export class TaskUpdateNotifier {
     if (this.unsubLifecycle) {
       this.unsubLifecycle();
       this.unsubLifecycle = undefined;
+    }
+    const deadline = Date.now() + Math.max(500, this.pollMs * 2);
+    while (this.inFlight.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
 
@@ -193,6 +199,9 @@ export class TaskUpdateNotifier {
   }
 
   private async publish(taskId: string, mode: 'event' | 'poll', lifecycleAt?: string) {
+    if (this.stopping) {
+      return;
+    }
     if (this.inFlight.has(taskId)) {
       return;
     }
