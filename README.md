@@ -10,6 +10,7 @@
 - Pluggable local execution engine (mock mode included)
 - Multi-agent task orchestration with worker lifecycle state
 - Optional sentry supervisor for escalations and incident tracking
+- Pluggable memory backends (`local` markdown or `qmd` semantic retrieval)
 - Repo registry + isolated git worktree execution pipeline
 - Release snapshots with atomic activation + rollback
 - Security audit, log redaction/retention, and diagnostics bundle generation
@@ -112,6 +113,12 @@ Strict mode defaults:
 - running/blocked/terminal task updates are posted through transport outboxes with retry/backoff
 - notifier bindings survive restart and resume lifecycle updates for in-flight tasks
 
+Semantic memory modes:
+
+- `MEMORY_PROVIDER=local` keeps markdown-only memory context (`<DATA_DIR>/memory/*.md`).
+- `MEMORY_PROVIDER=qmd` keeps markdown as source of truth and adds semantic recall snippets via local `qmd` CLI.
+- If qmd lookup fails, Talonbot falls back to markdown-only memory without failing the task.
+
 Transport provider modes:
 
 - `CHAT_TRANSPORT_PROVIDER=legacy` keeps existing Slack Bolt + Discord gateway transports.
@@ -204,6 +211,7 @@ Command backend is disabled by default. Enable explicitly with `TALONBOT_SECRET_
 - startup reconciliation snapshot
 - transport outbox states (`.discord` / `.slack`)
 - transport stack status snapshot (`transport-status.json`)
+- memory provider status snapshot (`memory-status.json`)
 
 Example:
 

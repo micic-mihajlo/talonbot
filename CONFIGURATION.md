@@ -41,6 +41,16 @@
 - `WORKER_SESSION_PREFIX` default: `dev-agent`
 - `TMUX_BINARY` default: `tmux` (required when `WORKER_RUNTIME=tmux`)
 - `WORKER_TMUX_POLL_MS` default: `500`
+- `MEMORY_PROVIDER` values: `local`, `qmd` (default `local`)
+- `QMD_COMMAND` default: `qmd`
+- `QMD_ARGS` default: empty (supports placeholders: `{query}`, `{workspace}`, `{limit}`)
+- `QMD_TIMEOUT_MS` default: `10000`
+- `QMD_WORKSPACE_DIR` default: `<DATA_DIR>/memory`
+- `QMD_MAX_SNIPPETS` default: `6`
+- `QMD_MAX_CONTEXT_BYTES` default: `8000`
+- `QMD_REINDEX_ON_STARTUP` default: `false`
+- `QMD_MIN_SCORE` default: `0`
+- `QMD_FAIL_MODE` values: `open`, `strict` (default `open`)
 
 ## Orchestration
 
@@ -134,6 +144,7 @@ Notes:
 - `WORKER_MAX_RETRIES`: `1` or `2` for fast escalation
 - `SESSION_LOG_RETENTION_DAYS`: according to policy (for example `14` or `30`)
 - `BRIDGE_SHARED_SECRET`: required for signed webhook/envelope ingress
+- `MEMORY_PROVIDER`: start with `local`; switch to `qmd` after validating CLI availability and retrieval quality
 
 ## Release and rollback contract
 

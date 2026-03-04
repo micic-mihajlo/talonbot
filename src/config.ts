@@ -78,6 +78,16 @@ const schemaBase = z.object({
   TASK_AUTO_PR: bool.default(false),
   STARTUP_INTEGRITY_MODE: z.enum(['off', 'warn', 'strict']).default('strict'),
   SESSION_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(14),
+  MEMORY_PROVIDER: z.enum(['local', 'qmd']).default('local'),
+  QMD_COMMAND: z.string().default('qmd'),
+  QMD_ARGS: z.string().default(''),
+  QMD_TIMEOUT_MS: z.coerce.number().int().min(1000).max(5 * 60 * 1000).default(10000),
+  QMD_WORKSPACE_DIR: z.string().default(''),
+  QMD_MAX_SNIPPETS: z.coerce.number().int().min(1).max(50).default(6),
+  QMD_MAX_CONTEXT_BYTES: z.coerce.number().int().min(1000).max(100000).default(8000),
+  QMD_REINDEX_ON_STARTUP: bool.default(false),
+  QMD_MIN_SCORE: z.coerce.number().min(0).max(1).default(0),
+  QMD_FAIL_MODE: z.enum(['open', 'strict']).default('open'),
   ENABLE_WEBHOOK_BRIDGE: bool.default(true),
   BRIDGE_SHARED_SECRET: z.string().default(''),
   BRIDGE_RETRY_BASE_MS: z.coerce.number().int().min(100).max(120000).default(2000),
@@ -275,9 +285,11 @@ export const parseAppConfig = (
   const releaseHealthcheckUrl =
     parsed.RELEASE_HEALTHCHECK_URL.trim() ||
     `http://127.0.0.1:${parsed.CONTROL_HTTP_PORT > 0 ? parsed.CONTROL_HTTP_PORT : 8080}/health`;
+  const qmdWorkspaceDir = parsed.QMD_WORKSPACE_DIR.trim() || path.join(parsed.DATA_DIR, 'memory');
   return {
     ...parsed,
     RELEASE_HEALTHCHECK_URL: releaseHealthcheckUrl,
+    QMD_WORKSPACE_DIR: qmdWorkspaceDir,
     SLACK_ALLOWED_CHANNELS: strList(parsed.SLACK_ALLOWED_CHANNELS),
     SLACK_ALLOWED_CHANNEL_PREFIXES: strList(parsed.SLACK_ALLOWED_CHANNEL_PREFIXES),
     SLACK_ALLOWED_USERS: strList(parsed.SLACK_ALLOWED_USERS),

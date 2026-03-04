@@ -187,4 +187,19 @@ describe('startup validation', () => {
     const issue = issues.find((entry) => entry.code === 'slack_missing_secrets');
     expect(issue?.severity).toBe('error');
   });
+
+  it('errors in strict mode when qmd memory provider command is unavailable', () => {
+    const issues = validateStartupConfig({
+      ...defaultConfig,
+      ENGINE_MODE: 'mock',
+      MEMORY_PROVIDER: 'qmd',
+      QMD_COMMAND: 'qmd-command-not-on-path',
+      STARTUP_INTEGRITY_MODE: 'strict',
+      DATA_DIR: tempPath('data'),
+      CONTROL_SOCKET_PATH: `${tempPath('socket')}.sock`,
+      QMD_WORKSPACE_DIR: tempPath('qmd-workspace'),
+    });
+    const issue = issues.find((entry) => entry.code === 'qmd_command_not_found');
+    expect(issue?.severity).toBe('error');
+  });
 });

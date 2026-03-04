@@ -59,6 +59,11 @@ describe('diagnostics bundle', () => {
         provider: 'dual',
         stacks: [{ name: 'legacy-discord', health: { healthy: true } }],
       },
+      memoryStatus: {
+        provider: 'qmd',
+        healthy: true,
+        lastSnippetCount: 3,
+      },
     });
 
     expect(bundle.files).toContain('workers.json');
@@ -69,6 +74,7 @@ describe('diagnostics bundle', () => {
     expect(bundle.files).toContain('transport-outbox.chat-sdk.discord.json');
     expect(bundle.files).toContain('transport-outbox.chat-sdk.slack.json');
     expect(bundle.files).toContain('transport-status.json');
+    expect(bundle.files).toContain('memory-status.json');
 
     const workers = JSON.parse(await readFile(path.join(bundle.bundleDir, 'workers.json'), 'utf8')) as { runtime: string };
     expect(workers.runtime).toBe('tmux');

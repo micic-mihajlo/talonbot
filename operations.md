@@ -37,6 +37,19 @@ CHAT_SDK_REDIS_URL=redis://127.0.0.1:6379/0
 CHAT_TRANSPORT_PROVIDER=chat_sdk
 ```
 
+Memory provider rollout:
+
+```bash
+# default markdown memory
+MEMORY_PROVIDER=local
+
+# semantic recall with qmd CLI
+MEMORY_PROVIDER=qmd
+QMD_COMMAND=qmd
+QMD_ARGS='search --workspace {workspace} --limit {limit} --json {query}'
+QMD_FAIL_MODE=open
+```
+
 Dual mode defaults to legacy outbound sender ownership. To flip outbound ownership to Chat SDK:
 
 ```bash
@@ -62,7 +75,10 @@ Strict task-first chat contract:
 - completion evidence is intent-aware:
   - `implementation` requires verified PR by default when `CHAT_REQUIRE_VERIFIED_PR=true`;
   - `research`, `review`, `summarize`, `ops`, `unknown` require summary by default;
-  - explicit override is available through metadata (`taskIntent`, `requiresVerifiedPr`, `requirePrOverride`, `requiredArtifacts`).
+- explicit override is available through metadata (`taskIntent`, `requiresVerifiedPr`, `requirePrOverride`, `requiredArtifacts`).
+- memory context is provider-backed:
+  - `local`: markdown only;
+  - `qmd`: markdown + semantic snippets (`### Semantic recall`).
 
 Example policy behavior:
 
