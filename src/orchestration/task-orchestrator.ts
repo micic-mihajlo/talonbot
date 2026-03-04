@@ -1011,6 +1011,9 @@ export class TaskOrchestrator {
 
       if (policy.requiresVerifiedPr) {
         let prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+        if (!prUrl && repo && launched.path) {
+          prUrl = await this.tryCreateMissingPullRequest(task, repo, launched.path);
+        }
         const expectedHeadRefName = task.targetRepoFullName ? undefined : task.branch || this.latestArtifact(task, 'launcher')?.branch;
         if (!prUrl && repo && launched.path && !task.targetRepoFullName) {
           const discovered = await this.github
@@ -1451,6 +1454,53 @@ export class TaskOrchestrator {
     });
     details.push(`ran npm ${npmArgs[0]} in worktree`);
     return { repaired: true, details };
+  }
+
+  private async tryCreateMissingPullRequest(task: TaskRecord, repo: RepoRegistration, worktreePath: string) {
+    const existingPr = this.latestArtifact(task, 'pull_request')?.prUrl;
+    const branch = task.branch || this.latestArtifact(task, 'launcher')?.branch;
+    if (existingPr || !branch) {
+      return undefined;
+    }
+
+    const commitSha = this.latestArtifact(task, 'git_commit')?.commitSha;
+    if (!commitSha) {
+      return undefined;
+    }
+
+    try {
+      await this.github.pushBranch(worktreePath, repo.remote, branch);
+      const prUrl = await this.github.openPullRequest(worktreePath, {
+        title: `Task ${task.id}: ${task.text.slice(0, 80)}`,
+        body: `Automated fallback PR creation for ${task.id}.`,
+        base: repo.defaultBranch,
+        head: branch,
+      });
+      this.appendArtifact(
+        task,
+        {
+          kind: 'pull_request',
+          at: new Date().toISOString(),
+          prUrl,
+          branch,
+          summary: 'Opened pull request via fallback PR creation.',
+        },
+        false,
+      );
+      task.events.push({
+        at: new Date().toISOString(),
+        kind: 'pr_fallback_created',
+        message: `Created missing pull request via fallback: ${prUrl}`,
+      });
+      return prUrl;
+    } catch (error) {
+      task.events.push({
+        at: new Date().toISOString(),
+        kind: 'pr_fallback_failed',
+        message: `Fallback PR creation failed: ${stringifyUnknownError(error)}`,
+      });
+      return undefined;
+    }
   }
 
   private parseEngineOutput(text: string): ParsedEngineOutput {
