@@ -80,7 +80,7 @@ export const parseQmdOutput = (output: string, minScore = 0): QmdSnippet[] => {
         });
       }
     }
-    if (parsedSnippets.length > 0) {
+    if (parsedSnippets.length > 0 || items.length > 0) {
       return parsedSnippets;
     }
   } catch {
