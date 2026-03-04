@@ -180,9 +180,7 @@ const inferTargetRepoFullName = (text: string): string | undefined => {
   }
 
   const ownerMatch = trimmed.match(/\bunder\s+([A-Za-z0-9_.-]+)/i);
-  const repoMatch =
-    trimmed.match(/\b(?:repo(?:sitory)?\s+named|named)\s+([A-Za-z0-9_.-]+)/i) ||
-    trimmed.match(/\b(?:repo|repository)\s+([A-Za-z0-9_.-]+)/i);
+  const repoMatch = trimmed.match(/\b(?:repo(?:sitory)?\s+named|named)\s+([A-Za-z0-9_.-]+)/i);
   if (ownerMatch && repoMatch) {
     return `${ownerMatch[1]}/${repoMatch[1].replace(/\.git$/i, '')}`;
   }
