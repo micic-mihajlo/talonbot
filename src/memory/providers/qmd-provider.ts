@@ -146,16 +146,15 @@ export class QmdMemoryProvider implements MemoryProvider {
     const limitBytes = Number.isFinite(input.limitBytes)
       ? Math.max(1000, Number(input.limitBytes))
       : this.options.maxContextBytes;
-    const baseline = await this.markdown.readBootContext({ ...input, limitBytes });
     if (!this.healthy) {
       this.lastSnippetCount = 0;
-      return baseline;
+      return this.markdown.readBootContext({ ...input, limitBytes });
     }
 
     const query = this.buildQuery(input);
     if (!query) {
       this.lastSnippetCount = 0;
-      return baseline;
+      return this.markdown.readBootContext({ ...input, limitBytes });
     }
 
     try {
@@ -168,8 +167,10 @@ export class QmdMemoryProvider implements MemoryProvider {
         queryMs: this.lastRetrievalMs,
       });
       if (snippets.length === 0) {
-        return baseline;
+        return this.markdown.readBootContext({ ...input, limitBytes });
       }
+      const baselineBudget = Math.max(1000, Math.floor(limitBytes * 0.7));
+      const baseline = await this.markdown.readBootContext({ ...input, limitBytes: baselineBudget });
       const semantic = snippets
         .map((snippet, index) => `- [${index + 1}] ${snippet.text}`)
         .join('\n');
