@@ -44,7 +44,7 @@ const trimToBytes = (input: string, limitBytes: number) => {
 
   let out = input;
   while (out.length > 0 && Buffer.byteLength(out, 'utf8') > limitBytes) {
-    out = out.slice(Math.max(1, Math.floor(out.length * 0.85)));
+    out = out.slice(0, Math.max(1, Math.floor(out.length * 0.85)));
   }
   return out;
 };
