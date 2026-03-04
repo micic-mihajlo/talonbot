@@ -1104,7 +1104,8 @@ export class ControlPlane {
         taskPolicyHint,
         defaultVerifiedPr: this.config.CHAT_REQUIRE_VERIFIED_PR,
       });
-      const targetRepoFullName = inferTargetRepoFullName(text);
+      const isRepoCreation = REPO_CREATION_CUES.some((pattern) => pattern.test(text));
+      const targetRepoFullName = isRepoCreation ? inferTargetRepoFullName(text) : undefined;
       const engineTimeoutMs = inferTaskTimeoutMs(text, this.config.ENGINE_TIMEOUT_MS, targetRepoFullName);
       const task = await this.tasks.submitTask({
         text,
