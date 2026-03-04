@@ -621,7 +621,10 @@ export class TaskOrchestrator {
             ? this.config.CHAT_REQUIRE_VERIFIED_PR
             : false;
     const requiredArtifacts = normalizeArtifactKinds(input.requiredArtifacts) || (requiresVerifiedPr ? ['pr'] : ['summary']);
-    const engineTimeoutMs = normalizeTimeoutMs(input.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS);
+    const hasTaskTimeoutOverride = Number.isFinite(input.engineTimeoutMs);
+    const engineTimeoutMs = hasTaskTimeoutOverride
+      ? normalizeTimeoutMs(input.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS)
+      : undefined;
 
     return {
       id,
@@ -1303,6 +1306,9 @@ export class TaskOrchestrator {
   }
 
   private resolveTaskTimeoutMs(task: TaskRecord) {
+    if (!Number.isFinite(task.engineTimeoutMs)) {
+      return this.config.ENGINE_TIMEOUT_MS;
+    }
     return normalizeTimeoutMs(task.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS);
   }
 
@@ -1587,7 +1593,9 @@ export class TaskOrchestrator {
         typeof raw.targetRepoFullName === 'string' && raw.targetRepoFullName.trim()
           ? raw.targetRepoFullName.trim()
           : undefined,
-      engineTimeoutMs: normalizeTimeoutMs(raw.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS),
+      engineTimeoutMs: Number.isFinite(raw.engineTimeoutMs)
+        ? normalizeTimeoutMs(raw.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS)
+        : undefined,
       taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferredTaskIntent,
       requiresVerifiedPr,
       requiredArtifacts:
