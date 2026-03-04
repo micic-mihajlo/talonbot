@@ -139,6 +139,16 @@ const composeEngineArgs = (baseArgs: string[], model?: string, provider?: string
 
   return args;
 };
+
+const resolveTimeoutMs = (defaultTimeoutMs: number, metadata: Record<string, string> | undefined) => {
+  const base = Number.isFinite(defaultTimeoutMs) ? Math.max(1000, Math.floor(defaultTimeoutMs)) : 120000;
+  const raw = metadata?.engineTimeoutMs;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    return base;
+  }
+  return Math.max(base, Math.min(30 * 60 * 1000, Math.max(1000, parsed)));
+};
 interface ExecFailureDetails {
   message: string;
   code?: number | string;
@@ -253,13 +263,14 @@ export class ProcessEngine implements AgentEngine {
 
     const [cmd, ...rawArgs] = splitCommand(this.command, this.args);
     const cmdArgs = composeEngineArgs(rawArgs, this.model, this.provider);
+    const timeoutMs = resolveTimeoutMs(this.timeoutMs, input.metadata);
     await fs.mkdir(this.cwd, { recursive: true });
 
     let stdout = '';
     try {
       const result = await runProcess(cmd, [...cmdArgs, payload], {
         cwd: this.cwd,
-        timeoutMs: this.timeoutMs,
+        timeoutMs,
         signal,
         env: buildEngineEnv(input, this.cwd),
       });
@@ -271,7 +282,7 @@ export class ProcessEngine implements AgentEngine {
         route: input.route,
         command: cmd,
         args: cmdArgs,
-        timeoutMs: this.timeoutMs,
+        timeoutMs,
         cwd: this.cwd,
         payloadBytes: Buffer.byteLength(payload, 'utf8'),
         ...details,

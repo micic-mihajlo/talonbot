@@ -43,8 +43,17 @@ export const verifyGitHubPullRequestUrl = async (
   url: string,
   timeoutMs = 10000,
   expectedHeadRefName?: string,
+  expectedRepoFullName?: string,
 ): Promise<boolean> => {
   try {
+    if (expectedRepoFullName?.trim()) {
+      const match = url.match(/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/i);
+      const repoFromUrl = match ? `${match[1]}/${match[2]}`.toLowerCase() : '';
+      if (!repoFromUrl || repoFromUrl !== expectedRepoFullName.trim().toLowerCase()) {
+        return false;
+      }
+    }
+
     const { stdout } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'url,headRefName'], {
       timeout: timeoutMs,
       windowsHide: true,

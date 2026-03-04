@@ -22,6 +22,20 @@ import { EventDedupeGuard } from './transports/event-dedupe.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 
+const normalizeIncidentError = (value: unknown) => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[unserializable_error_object]';
+    }
+  }
+  return value === undefined || value === null ? 'none' : String(value);
+};
+
 const envelopeToTaskText = (source: string, type: string, payload: unknown) => {
   if (payload && typeof payload === 'object') {
     const maybe = payload as { text?: unknown; message?: unknown; action?: unknown; repository?: { full_name?: unknown } };
@@ -97,7 +111,7 @@ const run = async () => {
         listTasks: () => taskOrchestrator.listTasks(),
         onEscalation: async (incident) => {
           logger.error(
-            `sentry escalation detected task=${incident.taskId} repo=${incident.repoId} state=${incident.state} error=${incident.error || 'none'}`,
+            `sentry escalation detected task=${incident.taskId} repo=${incident.repoId} state=${incident.state} error=${normalizeIncidentError(incident.error)}`,
           );
         },
       })

@@ -164,6 +164,39 @@ interface TaskPolicy {
   requiredArtifacts: RequiredArtifactKind[];
 }
 
+const HEAVY_TASK_TIMEOUT_MS = 5 * 60 * 1000;
+const REPO_CREATION_CUES = [
+  /\bcreate\b.*\bnew\b.*\b(?:github\s+)?repo(?:sitory)?\b/i,
+  /\b(?:create|make|spin up|bootstrap|scaffold)\b.*\b(?:github\s+)?repo(?:sitory)?\b/i,
+];
+
+const inferTargetRepoFullName = (text: string): string | undefined => {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const fromUrl = trimmed.match(/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/i);
+  if (fromUrl) {
+    return `${fromUrl[1]}/${fromUrl[2].replace(/\.git$/i, '')}`;
+  }
+
+  const ownerMatch = trimmed.match(/\bunder\s+([A-Za-z0-9_.-]+)/i);
+  const repoMatch = trimmed.match(/\b(?:repo(?:sitory)?\s+named|named)\s+([A-Za-z0-9_.-]+)/i);
+  if (ownerMatch && repoMatch) {
+    return `${ownerMatch[1]}/${repoMatch[1].replace(/\.git$/i, '')}`;
+  }
+
+  return undefined;
+};
+
+const inferTaskTimeoutMs = (text: string, baseTimeoutMs: number, targetRepoFullName?: string): number | undefined => {
+  const boundedBase = Number.isFinite(baseTimeoutMs) ? Math.max(1000, Math.floor(baseTimeoutMs)) : 120000;
+  const looksHeavy = targetRepoFullName && REPO_CREATION_CUES.some((pattern) => pattern.test(text));
+  if (!looksHeavy) {
+    return undefined;
+  }
+  return Math.max(boundedBase, HEAVY_TASK_TIMEOUT_MS);
+};
+
 const normalizeTaskArtifactKinds = (artifacts?: ReadonlyArray<string> | string | undefined): RequiredArtifactKind[] | undefined => {
   if (typeof artifacts === 'string') {
     artifacts = artifacts.split(',').map((value) => value.trim());
@@ -1069,10 +1102,15 @@ export class ControlPlane {
         taskPolicyHint,
         defaultVerifiedPr: this.config.CHAT_REQUIRE_VERIFIED_PR,
       });
+      const isRepoCreation = REPO_CREATION_CUES.some((pattern) => pattern.test(text));
+      const targetRepoFullName = isRepoCreation ? inferTargetRepoFullName(text) : undefined;
+      const engineTimeoutMs = inferTaskTimeoutMs(text, this.config.ENGINE_TIMEOUT_MS, targetRepoFullName);
       const task = await this.tasks.submitTask({
         text,
         sessionKey,
         source: 'transport',
+        targetRepoFullName,
+        engineTimeoutMs,
         taskIntent: policy.taskIntent,
         requiresVerifiedPr: policy.requiresVerifiedPr,
         requiredArtifacts: policy.requiredArtifacts,

@@ -154,6 +154,31 @@ const toEventDetails = (details?: Record<string, unknown>) => {
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
+const normalizeTimeoutMs = (value: unknown, fallback: number) => {
+  const parsed = Number.isFinite(value) ? Number(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(30 * 60 * 1000, Math.max(1000, Math.floor(parsed)));
+};
+
+const stringifyUnknownError = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return '[unserializable_error_object]';
+    }
+  }
+  return String(error);
+};
+
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 const splitShellArgs = (args: string) =>
   args && args.trim().length > 0
@@ -434,6 +459,8 @@ export class TaskOrchestrator {
       source,
       text: input.text,
       repoId: repo.id,
+      targetRepoFullName: input.targetRepoFullName,
+      engineTimeoutMs: input.engineTimeoutMs,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
       taskIntent: input.taskIntent,
@@ -526,6 +553,8 @@ export class TaskOrchestrator {
       source: input.source || 'operator',
       text: input.text,
       repoId: repo.id,
+      targetRepoFullName: input.targetRepoFullName,
+      engineTimeoutMs: input.engineTimeoutMs,
       sessionKey: input.sessionKey,
       parentTaskId: input.parentTaskId,
       taskIntent: input.taskIntent,
@@ -543,6 +572,8 @@ export class TaskOrchestrator {
         source: input.source || 'operator',
         text: childPrompt,
         repoId: repo.id,
+        targetRepoFullName: input.targetRepoFullName,
+        engineTimeoutMs: input.engineTimeoutMs,
         sessionKey: input.sessionKey,
         parentTaskId: parent.id,
         taskIntent: input.taskIntent,
@@ -565,6 +596,8 @@ export class TaskOrchestrator {
     source: TaskRecord['source'];
     text: string;
     repoId: string;
+    targetRepoFullName?: string;
+    engineTimeoutMs?: number;
     sessionKey?: string;
     parentTaskId?: string;
     status?: TaskStatus;
@@ -588,6 +621,10 @@ export class TaskOrchestrator {
             ? this.config.CHAT_REQUIRE_VERIFIED_PR
             : false;
     const requiredArtifacts = normalizeArtifactKinds(input.requiredArtifacts) || (requiresVerifiedPr ? ['pr'] : ['summary']);
+    const hasTaskTimeoutOverride = Number.isFinite(input.engineTimeoutMs);
+    const engineTimeoutMs = hasTaskTimeoutOverride
+      ? normalizeTimeoutMs(input.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS)
+      : undefined;
 
     return {
       id,
@@ -601,6 +638,10 @@ export class TaskOrchestrator {
       source: input.source,
       text: input.text,
       repoId: input.repoId,
+      targetRepoFullName: typeof input.targetRepoFullName === 'string' && input.targetRepoFullName.trim()
+        ? input.targetRepoFullName.trim()
+        : undefined,
+      engineTimeoutMs,
       status,
       state: status,
       assignedSession,
@@ -930,8 +971,8 @@ export class TaskOrchestrator {
 
       if (policy.requiresVerifiedPr) {
         let prUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
-        const expectedHeadRefName = task.branch || this.latestArtifact(task, 'launcher')?.branch;
-        if (!prUrl && repo && launched.path) {
+        const expectedHeadRefName = task.targetRepoFullName ? undefined : task.branch || this.latestArtifact(task, 'launcher')?.branch;
+        if (!prUrl && repo && launched.path && !task.targetRepoFullName) {
           const discovered = await this.github
             .findPullRequestByBranch(launched.path, {
               expectedHeadRefName,
@@ -953,7 +994,9 @@ export class TaskOrchestrator {
             prUrl = discovered.url;
           }
         }
-        const verified = prUrl ? await verifyGitHubPullRequestUrl(prUrl, 10000, expectedHeadRefName) : false;
+        const verified = prUrl
+          ? await verifyGitHubPullRequestUrl(prUrl, 10000, expectedHeadRefName, task.targetRepoFullName)
+          : false;
         if (!verified) {
           task.error = 'blocked: verified_pr_required';
           this.appendArtifact(
@@ -1035,7 +1078,7 @@ export class TaskOrchestrator {
     } catch (error) {
       task.retryCount += 1;
       task.updatedAt = new Date().toISOString();
-      task.error = error instanceof Error ? error.message : String(error);
+      task.error = stringifyUnknownError(error);
       this.appendArtifact(
         task,
         {
@@ -1166,6 +1209,7 @@ export class TaskOrchestrator {
       metadata: {
         taskId: task.id,
         repoId: repo.id,
+        engineTimeoutMs: String(this.resolveTaskTimeoutMs(task)),
       },
       contextLines: [],
       rawEvent: buildSyntheticEvent(task.assignedSession, task.text),
@@ -1232,7 +1276,7 @@ export class TaskOrchestrator {
     });
     await this.persist();
 
-    const deadline = Date.now() + this.config.ENGINE_TIMEOUT_MS;
+    const deadline = Date.now() + this.resolveTaskTimeoutMs(task);
     while (Date.now() <= deadline) {
       const done = await fs
         .access(exitPath)
@@ -1259,6 +1303,13 @@ export class TaskOrchestrator {
     }
 
     return stdout.trim();
+  }
+
+  private resolveTaskTimeoutMs(task: TaskRecord) {
+    if (!Number.isFinite(task.engineTimeoutMs)) {
+      return this.config.ENGINE_TIMEOUT_MS;
+    }
+    return normalizeTimeoutMs(task.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS);
   }
 
   private parseEngineOutput(text: string): ParsedEngineOutput {
@@ -1538,6 +1589,13 @@ export class TaskOrchestrator {
       source: raw.source === 'transport' || raw.source === 'webhook' || raw.source === 'operator' || raw.source === 'system' ? raw.source : 'operator',
       text: typeof raw.text === 'string' ? raw.text : '',
       repoId: typeof raw.repoId === 'string' ? raw.repoId : '',
+      targetRepoFullName:
+        typeof raw.targetRepoFullName === 'string' && raw.targetRepoFullName.trim()
+          ? raw.targetRepoFullName.trim()
+          : undefined,
+      engineTimeoutMs: Number.isFinite(raw.engineTimeoutMs)
+        ? normalizeTimeoutMs(raw.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS)
+        : undefined,
       taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferredTaskIntent,
       requiresVerifiedPr,
       requiredArtifacts:
