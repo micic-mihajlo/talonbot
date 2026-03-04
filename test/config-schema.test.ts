@@ -88,4 +88,15 @@ describe('config schema', () => {
       ),
     ).toThrow(/SLACK_APP_TOKEN/);
   });
+
+  it('derives qmd workspace from DATA_DIR by default', () => {
+    const parsed = parseAppConfig(
+      {
+        DATA_DIR: '/tmp/talonbot-data',
+      } as NodeJS.ProcessEnv,
+      {},
+    );
+    expect(parsed.MEMORY_PROVIDER).toBe('local');
+    expect(parsed.QMD_WORKSPACE_DIR).toBe('/tmp/talonbot-data/memory');
+  });
 });

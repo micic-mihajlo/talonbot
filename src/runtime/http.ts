@@ -22,6 +22,7 @@ export interface RuntimeServices {
   sentry?: SentryAgent;
   chatSdkTransport?: ChatSdkTransport;
   transportStatus?: () => unknown;
+  memoryStatus?: () => unknown;
   diagnosticsOutputDir?: string;
   startupReconciliation?: unknown;
 }
@@ -247,6 +248,7 @@ export const createHttpServer = (
           bridge: services?.bridge ? { enabled: true } : { enabled: false },
           sentry: services?.sentry ? services.sentry.getStatus() : null,
           transports: services?.transportStatus ? services.transportStatus() : null,
+          memory: services?.memoryStatus ? services.memoryStatus() : null,
         },
       };
       if (services?.bridge) {
@@ -284,6 +286,7 @@ export const createHttpServer = (
         sessions: control.listSessions(),
         aliases: control.listAliases(),
         transports: services?.transportStatus ? services.transportStatus() : null,
+        memory: services?.memoryStatus ? services.memoryStatus() : null,
         orchestration,
       });
       return;
@@ -908,6 +911,7 @@ export const createHttpServer = (
           audit,
           reconciliation: services?.startupReconciliation,
           transportStatus: services?.transportStatus ? services.transportStatus() : undefined,
+          memoryStatus: services?.memoryStatus ? services.memoryStatus() : undefined,
         });
 
         writeJson(res, 200, bundle);

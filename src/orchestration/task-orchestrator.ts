@@ -24,6 +24,7 @@ import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
 import { extractGitHubPullRequestUrls, verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
+import { createLogger } from '../utils/logger.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -267,7 +268,7 @@ export class TaskOrchestrator {
       sessionPrefix: config.WORKER_SESSION_PREFIX,
       tmuxBinary: config.TMUX_BINARY,
     });
-    this.memory = new TeamMemory(path.join(dataDir, 'memory'));
+    this.memory = new TeamMemory(path.join(dataDir, 'memory'), config, createLogger('memory', config.LOG_LEVEL as any));
     this.engine = buildEngine(config, 'orchestrator');
   }
 
@@ -300,6 +301,10 @@ export class TaskOrchestrator {
       ? taskIds.map((taskId) => this.tasks.get(taskId)).filter((task): task is TaskRecord => Boolean(task))
       : this.listTasks();
     return tasks.map((task) => this.buildProgressReport(task));
+  }
+
+  getMemoryStatus() {
+    return this.memory.status();
   }
 
   onLifecycle(listener: (event: TaskLifecycleEvent) => void) {
@@ -795,7 +800,14 @@ export class TaskOrchestrator {
       });
       await this.persist();
 
-      const memoryContext = await this.memory.readBootContext();
+      const memoryContext = await this.memory.readBootContext({
+        taskId: task.id,
+        taskText: task.text,
+        repoId: repo.id,
+        taskIntent: task.taskIntent,
+        sessionKey: task.sessionKey,
+        limitBytes: this.config.MEMORY_PROVIDER === 'qmd' ? this.config.QMD_MAX_CONTEXT_BYTES : undefined,
+      });
       const outputText = await this.runWorkerTurn(task, repo, launched.path, memoryContext);
 
       if (task.cancelRequested) {

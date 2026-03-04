@@ -17,6 +17,7 @@ export const createDiagnosticsBundle = async (input: {
   audit?: unknown;
   reconciliation?: unknown;
   transportStatus?: unknown;
+  memoryStatus?: unknown;
 }) => {
   const ts = new Date().toISOString().replace(/[.:]/g, '-');
   const bundleDir = path.join(input.outputDir, `talonbot-diagnostics-${ts}`);
@@ -82,6 +83,10 @@ export const createDiagnosticsBundle = async (input: {
 
   if (input.transportStatus) {
     await fs.writeFile(path.join(bundleDir, 'transport-status.json'), safeJson(input.transportStatus), { encoding: 'utf8' });
+  }
+
+  if (input.memoryStatus) {
+    await fs.writeFile(path.join(bundleDir, 'memory-status.json'), safeJson(input.memoryStatus), { encoding: 'utf8' });
   }
 
   return {

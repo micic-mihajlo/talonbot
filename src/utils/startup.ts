@@ -74,6 +74,7 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
   const expandedWorktreeDir = expandPath(config.WORKTREE_ROOT_DIR);
   const expandedReleaseDir = expandPath(config.RELEASE_ROOT_DIR);
   const expandedEngineDir = expandPath(config.ENGINE_CWD);
+  const expandedQmdWorkspaceDir = expandPath(config.QMD_WORKSPACE_DIR);
   const expandedOutboxStateFile = expandPath(config.TRANSPORT_OUTBOX_STATE_FILE);
   const expandedOutboxDir = path.dirname(expandedOutboxStateFile);
 
@@ -155,6 +156,43 @@ export const validateStartupConfig = (config: AppConfig): StartupIssue[] => {
           message: 'WORKER_RUNTIME=tmux requires ENGINE_MODE=process.',
           remediation: 'Set ENGINE_MODE=process when enabling tmux worker runtime.',
           code: 'tmux_runtime_engine_mode_mismatch',
+        }),
+      );
+    }
+  }
+
+  if (config.MEMORY_PROVIDER === 'qmd') {
+    if (!config.QMD_COMMAND.trim()) {
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'memory',
+          message: 'MEMORY_PROVIDER=qmd requires QMD_COMMAND to be set.',
+          remediation: 'Set QMD_COMMAND to the installed qmd executable path or command name.',
+          code: 'qmd_command_missing',
+        }),
+      );
+    } else if (!commandExists(config.QMD_COMMAND)) {
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'memory',
+          message: `QMD command "${config.QMD_COMMAND}" is not executable or not on PATH.`,
+          remediation: 'Install qmd or point QMD_COMMAND to an absolute executable path.',
+          code: 'qmd_command_not_found',
+        }),
+      );
+    }
+
+    const qmdWorkspaceErr = ensureDirWritable(expandedQmdWorkspaceDir);
+    if (qmdWorkspaceErr) {
+      issues.push(
+        issue({
+          severity: strict ? 'error' : 'warn',
+          area: 'memory',
+          message: `QMD_WORKSPACE_DIR "${expandedQmdWorkspaceDir}" is not writable: ${qmdWorkspaceErr}`,
+          remediation: 'Create and chown the qmd workspace directory for the runtime user.',
+          code: 'qmd_workspace_not_writable',
         }),
       );
     }

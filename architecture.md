@@ -8,11 +8,12 @@
 - `sentry agent`: monitors escalated tasks and records incidents
 - `bridge ingress`: normalizes webhook/envelope inputs with idempotency
 - `release manager`: snapshot, activate, rollback, integrity validation
+- `memory provider`: markdown baseline with optional semantic retrieval overlay
 
 ## Data layout
 
 - runtime state: `<DATA_DIR>/sessions`, `<DATA_DIR>/tasks`, `<DATA_DIR>/repos`
-- memory: `<DATA_DIR>/memory/*.md`
+- memory: `<DATA_DIR>/memory/*.md` (source of truth) + optional qmd semantic index over same workspace
 - releases: `<RELEASE_ROOT_DIR>/releases/<sha>` + `current` / `previous` symlinks
 - bridge state: `<DATA_DIR>/bridge/state.json` for envelope retries and poison tracking
 
@@ -23,8 +24,9 @@
 3. deterministic launcher creates task-scoped branch/worktree + assigned worker session (`running`)
 4. explicit status transitions are audited (`queued -> running -> done|failed`, plus `blocked/cancelled`)
 5. completion policy is attached per task (`taskIntent`, `requiresVerifiedPr`, `requiredArtifacts`)
-6. artifact-backed reports persist (launcher metadata, summary, changed files, optional commit/PR/checks/test output)
-6. non-LLM health monitor reports orphaned workers, stuck tasks, and stale worktrees via `/status`
+6. worker prompt includes memory context (markdown baseline, optionally enriched by semantic recall)
+7. artifact-backed reports persist (launcher metadata, summary, changed files, optional commit/PR/checks/test output)
+8. non-LLM health monitor reports orphaned workers, stuck tasks, and stale worktrees via `/status`
 
 ## Release flow
 

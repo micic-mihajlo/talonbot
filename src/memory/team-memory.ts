@@ -1,66 +1,79 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { AppConfig } from '../config.js';
+import { expandPath } from '../utils/path.js';
+import type {
+  MemoryBootContextInput,
+  MemoryFile,
+  MemoryProvider,
+  MemoryProviderStatus,
+  MemoryTaskCompletionInput,
+} from './provider.js';
+import { MarkdownMemoryProvider } from './providers/markdown-provider.js';
+import { QmdMemoryProvider } from './providers/qmd-provider.js';
 
-const MEMORY_FILES = ['operational.md', 'repos.md', 'users.md', 'incidents.md'] as const;
-
-export type MemoryFile = (typeof MEMORY_FILES)[number];
+const defaultLogger = {
+  info: (_message: string, _meta?: unknown) => undefined,
+  warn: (_message: string, _meta?: unknown) => undefined,
+};
 
 export class TeamMemory {
-  constructor(private readonly rootDir: string) {}
+  private readonly provider: MemoryProvider;
+  private readonly markdownProvider: MarkdownMemoryProvider;
 
-  async initialize() {
-    await fs.mkdir(this.rootDir, { recursive: true });
-    for (const file of MEMORY_FILES) {
-      const absolute = path.join(this.rootDir, file);
-      const exists = await fs
-        .access(absolute)
-        .then(() => true)
-        .catch(() => false);
-      if (!exists) {
-        await fs.writeFile(absolute, `# ${file}\n\n`, { encoding: 'utf8' });
-      }
+  constructor(
+    private readonly rootDir: string,
+    private readonly config: AppConfig,
+    logger: { info: (message: string, meta?: unknown) => void; warn: (message: string, meta?: unknown) => void } = defaultLogger,
+  ) {
+    this.markdownProvider = new MarkdownMemoryProvider(rootDir);
+    if (config.MEMORY_PROVIDER === 'qmd') {
+      this.provider = new QmdMemoryProvider(this.markdownProvider, {
+        command: config.QMD_COMMAND,
+        args: config.QMD_ARGS,
+        timeoutMs: config.QMD_TIMEOUT_MS,
+        workspaceDir: expandPath(config.QMD_WORKSPACE_DIR),
+        maxSnippets: config.QMD_MAX_SNIPPETS,
+        maxContextBytes: config.QMD_MAX_CONTEXT_BYTES,
+        minScore: config.QMD_MIN_SCORE,
+        reindexOnStartup: config.QMD_REINDEX_ON_STARTUP,
+        failMode: config.QMD_FAIL_MODE,
+        strictStartup: config.STARTUP_INTEGRITY_MODE === 'strict',
+        logger,
+      });
+    } else {
+      this.provider = this.markdownProvider;
     }
   }
 
-  async readBootContext(limitBytes = 12000) {
-    const chunks: string[] = [];
+  async initialize() {
+    await this.provider.initialize();
+  }
 
-    for (const file of MEMORY_FILES) {
-      const absolute = path.join(this.rootDir, file);
-      const body = await fs.readFile(absolute, { encoding: 'utf8' }).catch(() => '');
-      if (body.trim()) {
-        chunks.push(`## ${file}\n${body.trim()}`);
-      }
-    }
-
-    const joined = chunks.join('\n\n');
-    return joined.length > limitBytes ? joined.slice(joined.length - limitBytes) : joined;
+  async readBootContext(input: MemoryBootContextInput = {}) {
+    return this.provider.readBootContext(input);
   }
 
   async append(file: MemoryFile, entry: string) {
-    const absolute = path.join(this.rootDir, file);
-    const now = new Date().toISOString().slice(0, 10);
-    const block = `\n## ${now}\n- ${entry.replace(/\n+/g, '\n- ')}\n`;
-    await fs.appendFile(absolute, block, { encoding: 'utf8' });
+    await this.markdownProvider.append(file, entry);
   }
 
-  async recordTaskCompletion(input: {
-    taskId: string;
-    repoId: string;
-    state: string;
-    summary: string;
-  }) {
-    await this.append('operational.md', `Task ${input.taskId} (${input.repoId}) finished as ${input.state}.`);
-    await this.append('repos.md', `Repo ${input.repoId}: ${input.summary.slice(0, 500)}`);
+  async recordTaskCompletion(input: MemoryTaskCompletionInput) {
+    await this.provider.recordTaskCompletion(input);
   }
 
   async prune(maxBytesPerFile = 250_000) {
-    for (const file of MEMORY_FILES) {
-      const absolute = path.join(this.rootDir, file);
-      const body = await fs.readFile(absolute, { encoding: 'utf8' }).catch(() => '');
-      if (body.length <= maxBytesPerFile) continue;
-      const trimmed = body.slice(body.length - maxBytesPerFile);
-      await fs.writeFile(absolute, trimmed, { encoding: 'utf8' });
-    }
+    await this.provider.prune(maxBytesPerFile);
+  }
+
+  status(): MemoryProviderStatus {
+    const providerStatus = this.provider.status();
+    return {
+      ...providerStatus,
+      mode: providerStatus.mode || (this.config.MEMORY_PROVIDER === 'qmd' ? 'hybrid' : 'markdown'),
+    };
+  }
+
+  getRootDir() {
+    return path.resolve(this.rootDir);
   }
 }
