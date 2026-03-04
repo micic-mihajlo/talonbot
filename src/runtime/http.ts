@@ -95,6 +95,76 @@ const unauthorized = (res: http.ServerResponse) => {
   writeJson(res, 401, { error: 'unauthorized' });
 };
 
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+const buildStatusCompactHtml = (input: {
+  status: string;
+  uptimeSeconds: number;
+  taskCounts: { running: number; done: number; failed: number; total: number };
+  transportHealth: unknown;
+}) => {
+  const uptime = Number.isFinite(input.uptimeSeconds) ? `${Math.floor(input.uptimeSeconds)}s` : 'n/a';
+  const transport =
+    input.transportHealth == null
+      ? 'n/a'
+      : typeof input.transportHealth === 'string'
+        ? input.transportHealth
+        : JSON.stringify(input.transportHealth, null, 2);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="5" />
+  <title>Talonbot Status</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0b1020; color: #e6edf3; }
+    main { max-width: 980px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 14px; font-size: 22px; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .card { background: #151b2e; border: 1px solid #28324b; border-radius: 10px; padding: 14px; }
+    .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #97a6ba; margin-bottom: 8px; }
+    .value { font-size: 26px; font-weight: 700; line-height: 1.2; }
+    .sub { margin-top: 8px; font-size: 13px; color: #b7c4d3; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #d3deea; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Talonbot Compact Status</h1>
+    <div class="grid">
+      <section class="card">
+        <div class="label">Overall Status</div>
+        <div class="value">${escapeHtml(input.status)}</div>
+      </section>
+      <section class="card">
+        <div class="label">Uptime</div>
+        <div class="value">${escapeHtml(uptime)}</div>
+      </section>
+      <section class="card">
+        <div class="label">Task Counts</div>
+        <div class="sub">running: ${escapeHtml(input.taskCounts.running)}</div>
+        <div class="sub">done: ${escapeHtml(input.taskCounts.done)}</div>
+        <div class="sub">failed: ${escapeHtml(input.taskCounts.failed)}</div>
+        <div class="sub">total: ${escapeHtml(input.taskCounts.total)}</div>
+      </section>
+      <section class="card">
+        <div class="label">Transport Health</div>
+        <pre>${escapeHtml(transport)}</pre>
+      </section>
+    </div>
+  </main>
+</body>
+</html>`;
+};
+
 const requireAuth = (req: http.IncomingMessage, config: AppConfig, res: http.ServerResponse): boolean => {
   if (!config.CONTROL_AUTH_TOKEN) {
     return true;
@@ -289,6 +359,32 @@ export const createHttpServer = (
         memory: services?.memoryStatus ? services.memoryStatus() : null,
         orchestration,
       });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/status/compact') {
+      if (!requireAuth(req, config, res)) return;
+      const tasks = services?.tasks?.listTasks() || [];
+      const doneCount = tasks.filter((task) => task.state === 'done').length;
+      const failedCount = tasks.filter((task) => task.state === 'failed').length;
+      const runningCount = tasks.filter((task) => task.state === 'running').length;
+      const html = buildStatusCompactHtml({
+        status: 'ok',
+        uptimeSeconds: process.uptime(),
+        taskCounts: {
+          running: runningCount,
+          done: doneCount,
+          failed: failedCount,
+          total: tasks.length,
+        },
+        transportHealth: services?.transportStatus ? services.transportStatus() : null,
+      });
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.setHeader('cache-control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('pragma', 'no-cache');
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.end(html);
       return;
     }
 
