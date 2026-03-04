@@ -151,9 +151,3 @@ npm run ci:p0
 - Task-first mode is default for transport messages.
 - Use `chat: ...` or `/chat ...` to force plain conversational session mode.
 - Keep commit messages free of banned naming constraints in this repo.
-
-## Logo asset
-
-Place the logo file at:
-
-`docs/assets/talonbot-logo.png`
