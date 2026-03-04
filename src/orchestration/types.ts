@@ -44,6 +44,8 @@ export interface TaskRecord {
   source: 'transport' | 'webhook' | 'operator' | 'system';
   text: string;
   repoId: string;
+  targetRepoFullName?: string;
+  engineTimeoutMs?: number;
   taskIntent?: TaskIntent;
   requiresVerifiedPr?: boolean;
   requiredArtifacts?: RequiredArtifactKind[];
@@ -89,6 +91,8 @@ export interface RepoRegistrationInput {
 export interface SubmitTaskInput {
   text: string;
   repoId?: string;
+  targetRepoFullName?: string;
+  engineTimeoutMs?: number;
   sessionKey?: string;
   source?: TaskRecord['source'];
   parentTaskId?: string;
