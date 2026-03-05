@@ -95,6 +95,14 @@ const unauthorized = (res: http.ServerResponse) => {
   writeJson(res, 401, { error: 'unauthorized' });
 };
 
+const escapeHtml = (value: unknown): string =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 const requireAuth = (req: http.IncomingMessage, config: AppConfig, res: http.ServerResponse): boolean => {
   if (!config.CONTROL_AUTH_TOKEN) {
     return true;
@@ -289,6 +297,62 @@ export const createHttpServer = (
         memory: services?.memoryStatus ? services.memoryStatus() : null,
         orchestration,
       });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/status/compact') {
+      if (!requireAuth(req, config, res)) return;
+      const tasks = services?.tasks?.listTasks() || [];
+      const runningCount = tasks.filter((task) => task.state === 'running').length;
+      const doneCount = tasks.filter((task) => task.state === 'done').length;
+      const failedCount = tasks.filter((task) => task.state === 'failed').length;
+      const transportHealth = services?.transportStatus ? services.transportStatus() : null;
+
+      const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="5">
+<title>Talonbot Compact Status</title>
+<style>
+:root { color-scheme: dark light; }
+body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 16px; background: #0b1020; color: #e5e7eb; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 12px; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #9ca3af; margin-bottom: 8px; }
+.value { font-size: 20px; font-weight: 700; color: #f9fafb; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+<div class="grid">
+  <section class="card">
+    <div class="label">Overall status</div>
+    <div class="value">ok</div>
+  </section>
+  <section class="card">
+    <div class="label">Uptime</div>
+    <div class="value">${escapeHtml(`${Math.floor(process.uptime())}s`)}</div>
+  </section>
+  <section class="card">
+    <div class="label">Task counts</div>
+    <div class="mono">running: ${escapeHtml(runningCount)}\ndone: ${escapeHtml(doneCount)}\nfailed: ${escapeHtml(failedCount)}</div>
+  </section>
+  <section class="card">
+    <div class="label">Transport health</div>
+    <div class="mono">${escapeHtml(JSON.stringify(transportHealth, null, 2) || 'null')}</div>
+  </section>
+</div>
+</body>
+</html>`;
+
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.setHeader('cache-control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('pragma', 'no-cache');
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.end(html);
       return;
     }
 
