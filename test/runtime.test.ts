@@ -48,7 +48,7 @@ const requestHttp = <T>(
     body?: unknown;
     headers?: Record<string, string>;
   } = {},
-): Promise<{ statusCode: number; payload: T }> => {
+): Promise<{ statusCode: number; payload: T; headers: http.IncomingHttpHeaders }> => {
   const method = init.method ?? 'GET';
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { ...(init.headers || {}) };
@@ -66,7 +66,7 @@ const requestHttp = <T>(
       async (res) => {
         try {
           const payload = await readHttpBody<T>(res);
-          resolve({ statusCode: res.statusCode || 0, payload });
+          resolve({ statusCode: res.statusCode || 0, payload, headers: res.headers });
         } catch (error) {
           reject(error);
         }
@@ -76,6 +76,45 @@ const requestHttp = <T>(
     if (init.body) {
       req.write(JSON.stringify(init.body));
     }
+    req.end();
+  });
+};
+
+const requestHttpText = (
+  port: number,
+  route: string,
+  init: {
+    method?: 'GET' | 'POST';
+    headers?: Record<string, string>;
+  } = {},
+): Promise<{ statusCode: number; body: string; headers: http.IncomingHttpHeaders }> => {
+  const method = init.method ?? 'GET';
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        method,
+        hostname: '127.0.0.1',
+        port,
+        path: route,
+        headers: init.headers || {},
+      },
+      async (res) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const chunk of res) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+          }
+          resolve({
+            statusCode: res.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: res.headers,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      },
+    );
+    req.on('error', reject);
     req.end();
   });
 };
@@ -528,6 +567,25 @@ describe('HTTP control auth gating', () => {
     expect(statusAllowed.payload.status).toBe('ok');
     expect(Array.isArray(statusAllowed.payload.sessions)).toBe(true);
     expect(Array.isArray(statusAllowed.payload.aliases)).toBe(true);
+  });
+
+  it('returns 200 + text/html for compact status when authorized', async () => {
+    const response = await requestHttpText(httpPort, '/status/compact', {
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('Overall status');
+    expect(response.body).toContain('<meta http-equiv="refresh" content="5">');
+  });
+
+  it('returns 401 for compact status when auth token is required but missing', async () => {
+    const denied = await requestHttp<{ error: string }>(httpPort, '/status/compact');
+    expect(denied.statusCode).toBe(401);
+    expect(denied.payload.error).toBe('unauthorized');
   });
 });
 
