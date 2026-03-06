@@ -30,6 +30,7 @@ import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
 import { extractGitHubPullRequestUrls, verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 import { createLogger } from '../utils/logger.js';
+import { getAgentPackage } from '../runtime/agent-registry.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -1428,6 +1429,7 @@ export class TaskOrchestrator {
 
   private buildWorkerPrompt(task: TaskRecord, repoPath: string, worktreePath: string, memoryContext: string) {
     const policy = this.getTaskCompletionPolicy(task);
+    const workerSkill = getAgentPackage('worker').package;
     return buildWorkerAgentPrompt({
       taskTitle: task.title,
       taskText: task.text,
@@ -1438,7 +1440,7 @@ export class TaskOrchestrator {
       requiredArtifacts: policy.requiredArtifacts,
       requiresVerifiedPr: policy.requiresVerifiedPr,
       targetRepoFullName: task.targetRepoFullName,
-    });
+    }, workerSkill);
   }
 
   private async runWorkerTurn(task: TaskRecord, repo: RepoRegistration, worktreePath: string, memoryContext: string) {

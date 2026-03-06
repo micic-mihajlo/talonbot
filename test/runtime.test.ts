@@ -375,7 +375,10 @@ describe('HTTP control runtime', () => {
     expect(workItem.statusCode).toBe(200);
     expect(workItem.payload.workItem.report.message).toContain('Waiting on more logs');
 
-    const agents = await requestHttp<{ agents: Array<{ role: string; state: string; summary: string }> }>(httpPort, '/agents');
+    const agents = await requestHttp<{
+      agents: Array<{ role: string; state: string; summary: string; package: { skillLoaded: boolean; skillPath?: string } }>;
+      diagnostics: string[];
+    }>(httpPort, '/agents');
     expect(agents.statusCode).toBe(200);
     expect(agents.payload.agents.map((agent) => agent.role)).toEqual(['control', 'worker', 'sentry']);
     expect(agents.payload.agents.find((agent) => agent.role === 'worker')).toMatchObject({
@@ -384,6 +387,9 @@ describe('HTTP control runtime', () => {
     expect(agents.payload.agents.find((agent) => agent.role === 'sentry')).toMatchObject({
       state: 'disabled',
     });
+    expect(agents.payload.agents.every((agent) => agent.package.skillLoaded)).toBe(true);
+    expect(agents.payload.agents.find((agent) => agent.role === 'worker')?.package.skillPath).toContain('/agents/worker-agent/SKILL.md');
+    expect(agents.payload.diagnostics).toEqual([]);
   });
 });
 

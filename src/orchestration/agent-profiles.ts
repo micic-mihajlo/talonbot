@@ -1,4 +1,5 @@
 import type { RequiredArtifactKind, TaskIntent } from './types.js';
+import type { AgentPackage } from '../runtime/agent-registry.js';
 
 export type AgentRole = 'control' | 'worker' | 'sentry';
 export type AgentRuntimeState = 'ready' | 'idle' | 'running' | 'degraded' | 'disabled';
@@ -24,6 +25,27 @@ export interface WorkerPromptInput {
   requiresVerifiedPr: boolean;
   targetRepoFullName?: string;
 }
+
+const FALLBACK_SKILLS: Record<AgentRole, string> = {
+  control: [
+    '# Control Agent',
+    '',
+    'You coordinate inbound work, preserve source context, and keep operators informed.',
+    'Delegate execution rather than doing task-scoped repo work yourself.',
+  ].join('\n'),
+  worker: [
+    '# Worker Agent',
+    '',
+    'You are a task-scoped engineering worker operating inside an isolated worktree.',
+    'Complete the assigned task and return structured, verifiable evidence.',
+  ].join('\n'),
+  sentry: [
+    '# Sentry Agent',
+    '',
+    'You monitor blocked and failed tasks that require escalation.',
+    'Persist incidents and summarize what operators need to review.',
+  ].join('\n'),
+};
 
 export const CONTROL_AGENT_PROFILE: AgentProfile = {
   id: 'control-agent',
@@ -73,7 +95,10 @@ export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
   sentry: SENTRY_AGENT_PROFILE,
 };
 
-export const buildWorkerPrompt = (input: WorkerPromptInput) => {
+export const agentSkillBody = (role: AgentRole, agentPackage?: AgentPackage | null) =>
+  agentPackage?.skillBody?.trim() || FALLBACK_SKILLS[role];
+
+export const buildWorkerPrompt = (input: WorkerPromptInput, agentPackage?: AgentPackage | null) => {
   const requiredArtifacts = input.requiredArtifacts.length > 0 ? input.requiredArtifacts.join(', ') : 'summary';
   const policyLines = [
     `Task intent: ${input.taskIntent}`,
@@ -83,10 +108,9 @@ export const buildWorkerPrompt = (input: WorkerPromptInput) => {
   ];
 
   return [
-    `You are ${WORKER_AGENT_PROFILE.name.toLowerCase()} for Talonbot.`,
-    WORKER_AGENT_PROFILE.objective,
-    `Operating mode: ${WORKER_AGENT_PROFILE.operatingMode}`,
+    agentSkillBody('worker', agentPackage),
     '',
+    '## Runtime Task Context',
     `Task title: ${input.taskTitle}`,
     `Task: ${input.taskText}`,
     `Repo path: ${input.repoPath}`,

@@ -2,6 +2,7 @@ import type { ControlPlane } from '../control/index.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import type { SentryAgent } from '../orchestration/sentry-agent.js';
 import { AGENT_PROFILES, type AgentProfile, type AgentRole, type AgentRuntimeState } from '../orchestration/agent-profiles.js';
+import { discoverAgentPackages, resolveAgentsDir } from './agent-registry.js';
 
 export interface AgentRuntimeRecord {
   id: string;
@@ -10,12 +11,19 @@ export interface AgentRuntimeRecord {
   state: AgentRuntimeState;
   summary: string;
   profile: AgentProfile;
+  package: {
+    version?: string;
+    manifestPath?: string;
+    skillPath?: string;
+    skillLoaded: boolean;
+  };
   metrics: Record<string, boolean | number | string | null>;
 }
 
 export interface AgentRuntimeSnapshot {
   generatedAt: string;
   agents: AgentRuntimeRecord[];
+  diagnostics: string[];
 }
 
 interface BuildAgentRuntimeSnapshotOptions {
@@ -27,6 +35,8 @@ interface BuildAgentRuntimeSnapshotOptions {
 export const buildAgentRuntimeSnapshot = async (
   options: BuildAgentRuntimeSnapshotOptions,
 ): Promise<AgentRuntimeSnapshot> => {
+  const discovery = discoverAgentPackages(resolveAgentsDir());
+  const byRole = new Map(discovery.packages.map((entry) => [entry.manifest.role, entry] as const));
   const controlSessions = options.control.listSessions().length;
   const controlAliases = options.control.listAliases().length;
   const agents: AgentRuntimeRecord[] = [
@@ -37,6 +47,12 @@ export const buildAgentRuntimeSnapshot = async (
       state: 'ready',
       summary: `Control plane ready with ${controlSessions} active session(s) and ${controlAliases} alias(es).`,
       profile: AGENT_PROFILES.control,
+      package: {
+        version: byRole.get('control')?.manifest.version,
+        manifestPath: byRole.get('control')?.manifestPath,
+        skillPath: byRole.get('control')?.skillPath,
+        skillLoaded: Boolean(byRole.get('control')),
+      },
       metrics: {
         sessions: controlSessions,
         aliases: controlAliases,
@@ -57,9 +73,15 @@ export const buildAgentRuntimeSnapshot = async (
         activeTasks > 0
           ? `Worker runtime ${workerSnapshot.runtime} is executing ${activeTasks} task(s).`
           : orphanedSessions > 0
-            ? `Worker runtime ${workerSnapshot.runtime} has ${orphanedSessions} orphaned session(s).`
-            : `Worker runtime ${workerSnapshot.runtime} is idle.`,
+          ? `Worker runtime ${workerSnapshot.runtime} has ${orphanedSessions} orphaned session(s).`
+          : `Worker runtime ${workerSnapshot.runtime} is idle.`,
       profile: AGENT_PROFILES.worker,
+      package: {
+        version: byRole.get('worker')?.manifest.version,
+        manifestPath: byRole.get('worker')?.manifestPath,
+        skillPath: byRole.get('worker')?.skillPath,
+        skillLoaded: Boolean(byRole.get('worker')),
+      },
       metrics: {
         runtime: workerSnapshot.runtime,
         activeTasks,
@@ -76,6 +98,12 @@ export const buildAgentRuntimeSnapshot = async (
       state: 'disabled',
       summary: 'Worker runtime is not configured.',
       profile: AGENT_PROFILES.worker,
+      package: {
+        version: byRole.get('worker')?.manifest.version,
+        manifestPath: byRole.get('worker')?.manifestPath,
+        skillPath: byRole.get('worker')?.skillPath,
+        skillLoaded: Boolean(byRole.get('worker')),
+      },
       metrics: {
         runtime: null,
         activeTasks: 0,
@@ -98,6 +126,12 @@ export const buildAgentRuntimeSnapshot = async (
           ? `Sentry is tracking ${status.incidents} escalation incident(s).`
           : 'Sentry is idle with no active incidents.',
       profile: AGENT_PROFILES.sentry,
+      package: {
+        version: byRole.get('sentry')?.manifest.version,
+        manifestPath: byRole.get('sentry')?.manifestPath,
+        skillPath: byRole.get('sentry')?.skillPath,
+        skillLoaded: Boolean(byRole.get('sentry')),
+      },
       metrics: {
         scans: status.scans,
         trackedTasks: status.trackedTasks,
@@ -113,6 +147,12 @@ export const buildAgentRuntimeSnapshot = async (
       state: 'disabled',
       summary: 'Sentry is disabled.',
       profile: AGENT_PROFILES.sentry,
+      package: {
+        version: byRole.get('sentry')?.manifest.version,
+        manifestPath: byRole.get('sentry')?.manifestPath,
+        skillPath: byRole.get('sentry')?.skillPath,
+        skillLoaded: Boolean(byRole.get('sentry')),
+      },
       metrics: {
         scans: 0,
         trackedTasks: 0,
@@ -125,5 +165,6 @@ export const buildAgentRuntimeSnapshot = async (
   return {
     generatedAt: new Date().toISOString(),
     agents,
+    diagnostics: discovery.diagnostics,
   };
 };

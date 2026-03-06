@@ -1,0 +1,10 @@
+{
+  "id": "sentry-agent",
+  "role": "sentry",
+  "name": "Sentry Agent",
+  "description": "Background escalation watcher for blocked and failed tasks.",
+  "version": "1.0.0",
+  "skill_path": "SKILL.md",
+  "operating_mode": "Background incident scanner",
+  "autostart": true
+}
