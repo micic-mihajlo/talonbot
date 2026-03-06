@@ -61,6 +61,16 @@ const describeTaskRequirements = (task: TaskRecord) => {
   return `intent=${intent}, required=${required.length ? required.join('/') : 'none'}`;
 };
 
+const taskLabel = (task: TaskRecord) => {
+  const title =
+    typeof task.title === 'string' && task.title.trim()
+      ? task.title.trim()
+      : typeof task.text === 'string' && task.text.trim()
+        ? task.text.trim()
+        : '';
+  return title ? `Task ${task.id} (${title})` : `Task ${task.id}`;
+};
+
 const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
   const evidence: string[] = [];
   if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
@@ -70,35 +80,35 @@ const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
   const evidenceLine = evidence.length > 0 ? ` Evidence: ${evidence.join(' | ')}.` : '';
 
   if (task.status === 'running') {
-    return `Task ${task.id} is running (worker session: ${task.assignedSession || 'n/a'}).`;
+    return `${taskLabel(task)} is running (worker session: ${task.assignedSession || 'n/a'}).`;
   }
 
   if (task.status === 'blocked') {
     if (task.requiresVerifiedPr && task.error?.includes('verified_pr_required')) {
-      return `Task ${task.id} blocked for policy compliance (${describeTaskRequirements(task)}). Blocked pending verified PR URL.${evidenceLine}`;
+      return `${taskLabel(task)} blocked for policy compliance (${describeTaskRequirements(task)}). Blocked pending verified PR URL.${evidenceLine}`;
     }
 
     const missing = missingArtifacts(task);
     if (missing.length > 0) {
-      return `Task ${task.id} blocked for policy compliance (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
+      return `${taskLabel(task)} blocked for policy compliance (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
     }
 
-    return `Task ${task.id} is blocked. ${report?.message || task.error || 'Operator action is required.'} (${describeTaskRequirements(task)})${evidenceLine}`;
+    return `${taskLabel(task)} is blocked. ${report?.message || task.error || 'Operator action is required.'} (${describeTaskRequirements(task)})${evidenceLine}`;
   }
 
   if (task.status === 'done') {
     const missing = missingArtifacts(task);
     if (missing.length > 0) {
-      return `Task ${task.id} has no terminal completion evidence yet (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
+      return `${taskLabel(task)} has no terminal completion evidence yet (${describeTaskRequirements(task)}). Missing required artifacts: ${missing.join(', ')}.${evidenceLine}`;
     }
-    return `Task ${task.id} completed with required artifacts (${describeTaskRequirements(task)}).${evidenceLine}`;
+    return `${taskLabel(task)} completed with required artifacts (${describeTaskRequirements(task)}).${evidenceLine}`;
   }
 
   if (task.status === 'failed') {
-    return `Task ${task.id} failed. ${report?.message || task.error || 'Execution failed.'}${evidenceLine}`;
+    return `${taskLabel(task)} failed. ${report?.message || task.error || 'Execution failed.'}${evidenceLine}`;
   }
 
-  return `Task ${task.id} cancelled.${evidenceLine}`;
+  return `${taskLabel(task)} cancelled.${evidenceLine}`;
 };
 
 export class TaskUpdateNotifier {

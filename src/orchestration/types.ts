@@ -15,6 +15,16 @@ export type TaskArtifactKind =
 export type TaskIntent = 'research' | 'review' | 'summarize' | 'implementation' | 'ops' | 'unknown';
 export type RequiredArtifactKind = 'summary' | 'branch' | 'commit' | 'pr';
 
+export interface TaskSourceContext {
+  transport: 'slack' | 'discord' | 'socket';
+  channelId: string;
+  threadId?: string | null;
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  receivedAt?: string;
+}
+
 export interface TaskArtifact {
   kind: TaskArtifactKind;
   at: string;
@@ -42,6 +52,7 @@ export interface TaskRecord {
   parentTaskId?: string;
   sessionKey?: string;
   source: 'transport' | 'webhook' | 'operator' | 'system';
+  title: string;
   text: string;
   repoId: string;
   targetRepoFullName?: string;
@@ -49,6 +60,7 @@ export interface TaskRecord {
   taskIntent?: TaskIntent;
   requiresVerifiedPr?: boolean;
   requiredArtifacts?: RequiredArtifactKind[];
+  sourceContext?: TaskSourceContext;
   status: TaskStatus;
   state: TaskState;
   assignedSession: string;
@@ -91,6 +103,7 @@ export interface RepoRegistrationInput {
 export interface SubmitTaskInput {
   text: string;
   repoId?: string;
+  title?: string;
   targetRepoFullName?: string;
   engineTimeoutMs?: number;
   sessionKey?: string;
@@ -101,6 +114,7 @@ export interface SubmitTaskInput {
   requiresVerifiedPr?: boolean;
   requirePrOverride?: boolean;
   requiredArtifacts?: RequiredArtifactKind[];
+  sourceContext?: TaskSourceContext;
 }
 
 export interface WorktreeInfo {
@@ -134,10 +148,15 @@ export interface TaskLifecycleEvent {
 
 export interface TaskProgressReport {
   taskId: string;
+  title: string;
+  repoId: string;
   status: TaskStatus;
+  taskIntent: TaskIntent;
+  requiredArtifacts: RequiredArtifactKind[];
   artifactState: 'artifact-backed' | 'no-artifact';
   generatedAt: string;
   message: string;
+  sourceContext?: TaskSourceContext;
   evidence: {
     assignedSession?: string;
     branch?: string;
@@ -148,4 +167,23 @@ export interface TaskProgressReport {
     filesChanged?: string[];
     testOutput?: string;
   };
+}
+
+export interface WorkItemRecord {
+  id: string;
+  taskId: string;
+  title: string;
+  text: string;
+  source: TaskRecord['source'];
+  status: TaskStatus;
+  repoId: string;
+  taskIntent: TaskIntent;
+  requiredArtifacts: RequiredArtifactKind[];
+  sourceContext?: TaskSourceContext;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  blockedReason?: string;
+  report: TaskProgressReport;
 }
