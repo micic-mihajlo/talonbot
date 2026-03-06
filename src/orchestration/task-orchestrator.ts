@@ -24,6 +24,7 @@ import type {
 import { RepoRegistry } from './repo-registry.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { GitHubAutomation } from './github-automation.js';
+import { buildWorkerPrompt as buildWorkerAgentPrompt } from './agent-profiles.js';
 import { TeamMemory } from '../memory/team-memory.js';
 import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
@@ -822,6 +823,74 @@ export class TaskOrchestrator {
     return false;
   }
 
+  private async enrichPullRequestContext(task: TaskRecord, worktreePath: string, prUrl: string) {
+    const context = await this.github.getPullRequestContext(worktreePath, prUrl).catch(() => null);
+    if (!context) {
+      return null;
+    }
+
+    const at = new Date().toISOString();
+    const currentChecksSummary = this.latestArtifact(task, 'checks')?.checksSummary;
+    if (context.checks.summary && context.checks.summary !== currentChecksSummary) {
+      this.appendArtifact(
+        task,
+        {
+          kind: 'checks',
+          at,
+          checksSummary: context.checks.summary,
+          checksPassed: context.checks.passed,
+          summary: context.checks.summary,
+        },
+        false,
+      );
+    }
+
+    if (context.previewUrls.length > 0) {
+      this.appendArtifact(
+        task,
+        {
+          kind: 'preview',
+          at,
+          prUrl,
+          previewUrls: context.previewUrls,
+          summary: `Detected ${context.previewUrls.length} preview URL(s).`,
+        },
+        true,
+      );
+    }
+
+    if (context.review.totalComments > 0 || context.review.totalReviews > 0) {
+      this.appendArtifact(
+        task,
+        {
+          kind: 'review_feedback',
+          at,
+          prUrl,
+          reviewSummary: context.review.summary,
+          reviewDecision: context.review.decision,
+          reviewComments: context.review.totalComments,
+          changeRequests: context.review.changeRequests,
+          summary: context.review.summary,
+        },
+        true,
+      );
+    }
+
+    return context;
+  }
+
+  private reviewFeedbackRequiresAction(
+    review: { decision: string; totalComments: number; totalReviews: number; changeRequests: number } | null | undefined,
+  ) {
+    if (!review) {
+      return false;
+    }
+    if (review.changeRequests > 0) {
+      return true;
+    }
+    return review.decision === 'changes_requested';
+  }
+
   private async runTask(taskId: string) {
     const task = this.tasks.get(taskId);
     if (!task) return;
@@ -965,6 +1034,13 @@ export class TaskOrchestrator {
       }
 
       const policy = this.getTaskCompletionPolicy(task);
+      let prContext:
+        | {
+            checks: { summary: string; passed: boolean };
+            previewUrls: string[];
+            review: { summary: string; decision: string; totalComments: number; totalReviews: number; changeRequests: number };
+          }
+        | null = null;
       const summaryOnlyPolicy = !policy.requiresVerifiedPr && policy.requiredArtifacts.every((artifact) => artifact === 'summary');
 
       if (parsed.state === 'blocked') {
@@ -1066,6 +1142,8 @@ export class TaskOrchestrator {
             this.updateParentState(task);
             return;
           }
+
+          prContext = await this.enrichPullRequestContext(task, launched.path, prUrl);
         }
       }
 
@@ -1126,6 +1204,29 @@ export class TaskOrchestrator {
           this.updateParentState(task);
           return;
         }
+      }
+
+      const finalPrUrl = this.latestArtifact(task, 'pull_request')?.prUrl;
+      if (finalPrUrl && !prContext) {
+        prContext = await this.enrichPullRequestContext(task, launched.path, finalPrUrl);
+      }
+
+      if (finalPrUrl && this.reviewFeedbackRequiresAction(prContext?.review)) {
+        task.escalationRequired = true;
+        task.error = `blocked: review_feedback_required - ${prContext?.review.summary || 'review feedback requires action'}`;
+        this.transitionTask(task, {
+          to: 'blocked',
+          kind: 'review_feedback_required',
+          message: 'Blocked pending pull request review feedback.',
+          details: {
+            prUrl: finalPrUrl,
+            reviewDecision: prContext?.review.decision || 'unknown',
+            reviewSummary: prContext?.review.summary || '',
+          },
+        });
+        await this.persist();
+        this.updateParentState(task);
+        return;
       }
 
       const missingRequiredArtifacts = this.getMissingRequiredArtifacts(task, policy.requiredArtifacts);
@@ -1325,23 +1426,23 @@ export class TaskOrchestrator {
     void this.persist();
   }
 
-  private buildWorkerPrompt(taskText: string, repoPath: string, worktreePath: string, memoryContext: string) {
-    return [
-      'You are a task-scoped dev worker.',
-      `Task: ${taskText}`,
-      `Repo path: ${repoPath}`,
-      `Worktree path: ${worktreePath}`,
-      '',
-      'Return JSON only:',
-      '{"summary":"short summary","state":"done|blocked","commitMessage":"optional","prTitle":"optional","prBody":"optional","testOutput":"optional"}',
-      '',
-      'Team memory context:',
-      memoryContext || '(none)',
-    ].join('\n');
+  private buildWorkerPrompt(task: TaskRecord, repoPath: string, worktreePath: string, memoryContext: string) {
+    const policy = this.getTaskCompletionPolicy(task);
+    return buildWorkerAgentPrompt({
+      taskTitle: task.title,
+      taskText: task.text,
+      repoPath,
+      worktreePath,
+      memoryContext,
+      taskIntent: policy.taskIntent,
+      requiredArtifacts: policy.requiredArtifacts,
+      requiresVerifiedPr: policy.requiresVerifiedPr,
+      targetRepoFullName: task.targetRepoFullName,
+    });
   }
 
   private async runWorkerTurn(task: TaskRecord, repo: RepoRegistration, worktreePath: string, memoryContext: string) {
-    const prompt = this.buildWorkerPrompt(task.text, repo.path, worktreePath, memoryContext);
+    const prompt = this.buildWorkerPrompt(task, repo.path, worktreePath, memoryContext);
     if (this.config.WORKER_RUNTIME === 'tmux') {
       return this.runWorkerTurnViaTmux(task, repo, worktreePath, prompt);
     }
@@ -1682,6 +1783,8 @@ export class TaskOrchestrator {
       artifact.kind === 'git_commit' ||
       artifact.kind === 'pull_request' ||
       artifact.kind === 'checks' ||
+      artifact.kind === 'preview' ||
+      artifact.kind === 'review_feedback' ||
       artifact.kind === 'file_changes' ||
       artifact.kind === 'test_output',
     );
@@ -1719,6 +1822,8 @@ export class TaskOrchestrator {
     const commit = this.latestArtifact(task, 'git_commit');
     const pr = this.latestArtifact(task, 'pull_request');
     const checks = this.latestArtifact(task, 'checks');
+    const preview = this.latestArtifact(task, 'preview');
+    const review = this.latestArtifact(task, 'review_feedback');
     const files = this.latestArtifact(task, 'file_changes');
     const testOutput = this.latestArtifact(task, 'test_output');
 
@@ -1729,16 +1834,23 @@ export class TaskOrchestrator {
       commitSha: commit?.commitSha,
       prUrl: pr?.prUrl,
       checksSummary: checks?.checksSummary,
+      previewUrls: preview?.previewUrls,
+      reviewSummary: review?.reviewSummary,
+      reviewDecision: review?.reviewDecision,
+      reviewComments: review?.reviewComments,
+      changeRequests: review?.changeRequests,
       filesChanged: files?.filesChanged,
       testOutput: testOutput?.testOutput,
     };
 
     const runningEvidence = Boolean(evidence.assignedSession && evidence.branch && evidence.worktreePath);
     const completionEvidence = Boolean(
-      evidence.commitSha ||
+        evidence.commitSha ||
         evidence.prUrl ||
         (evidence.filesChanged && evidence.filesChanged.length > 0) ||
         evidence.checksSummary ||
+        (evidence.previewUrls && evidence.previewUrls.length > 0) ||
+        evidence.reviewSummary ||
         evidence.testOutput,
     );
 
@@ -1759,10 +1871,17 @@ export class TaskOrchestrator {
         ? `Task is running in ${evidence.worktreePath} on ${evidence.branch}.`
         : 'Task is running, but launcher artifacts are missing (no-artifact).';
     }
+    if (task.status === 'blocked' && evidence.reviewSummary) {
+      message = `Task is blocked pending pull request review feedback. ${evidence.reviewSummary}`;
+    }
     if (task.status === 'done') {
-      message = artifactBacked
-        ? 'Task is done with recorded completion artifacts.'
-        : 'Task is marked done, but no completion artifacts were recorded (no-artifact).';
+      if (artifactBacked && evidence.previewUrls?.length) {
+        message = `Task is done with recorded completion artifacts and ${evidence.previewUrls.length} preview URL(s).`;
+      } else {
+        message = artifactBacked
+          ? 'Task is done with recorded completion artifacts.'
+          : 'Task is marked done, but no completion artifacts were recorded (no-artifact).';
+      }
     }
 
     return {
@@ -1931,6 +2050,13 @@ export class TaskOrchestrator {
       prUrl: typeof candidate.prUrl === 'string' ? candidate.prUrl : undefined,
       checksSummary: typeof candidate.checksSummary === 'string' ? candidate.checksSummary : undefined,
       checksPassed: typeof candidate.checksPassed === 'boolean' ? candidate.checksPassed : undefined,
+      previewUrls: Array.isArray(candidate.previewUrls)
+        ? candidate.previewUrls.filter((value): value is string => typeof value === 'string')
+        : undefined,
+      reviewSummary: typeof candidate.reviewSummary === 'string' ? candidate.reviewSummary : undefined,
+      reviewDecision: typeof candidate.reviewDecision === 'string' ? candidate.reviewDecision : undefined,
+      reviewComments: Number.isFinite(candidate.reviewComments) ? Number(candidate.reviewComments) : undefined,
+      changeRequests: Number.isFinite(candidate.changeRequests) ? Number(candidate.changeRequests) : undefined,
       filesChanged: Array.isArray(candidate.filesChanged)
         ? candidate.filesChanged.filter((value): value is string => typeof value === 'string')
         : undefined,
@@ -1947,6 +2073,8 @@ export class TaskOrchestrator {
       candidate.kind === 'git_commit' ||
       candidate.kind === 'pull_request' ||
       candidate.kind === 'checks' ||
+      candidate.kind === 'preview' ||
+      candidate.kind === 'review_feedback' ||
       candidate.kind === 'test_output' ||
       candidate.kind === 'error' ||
       candidate.kind === 'no_artifact'
@@ -1955,8 +2083,10 @@ export class TaskOrchestrator {
     }
 
     if (candidate.commitSha) return 'git_commit';
-    if (candidate.prUrl) return 'pull_request';
     if (candidate.checksSummary || typeof candidate.checksPassed === 'boolean') return 'checks';
+    if (candidate.previewUrls?.length) return 'preview';
+    if (candidate.reviewSummary || typeof candidate.changeRequests === 'number') return 'review_feedback';
+    if (candidate.prUrl) return 'pull_request';
     if (candidate.filesChanged?.length) return 'file_changes';
     if (candidate.testOutput) return 'test_output';
     if (candidate.worktreePath || candidate.branch) return 'launcher';

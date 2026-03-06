@@ -8,6 +8,8 @@ export type TaskArtifactKind =
   | 'git_commit'
   | 'pull_request'
   | 'checks'
+  | 'preview'
+  | 'review_feedback'
   | 'test_output'
   | 'error'
   | 'no_artifact';
@@ -35,6 +37,11 @@ export interface TaskArtifact {
   prUrl?: string;
   checksSummary?: string;
   checksPassed?: boolean;
+  previewUrls?: string[];
+  reviewSummary?: string;
+  reviewDecision?: string;
+  reviewComments?: number;
+  changeRequests?: number;
   filesChanged?: string[];
   testOutput?: string;
   details?: Record<string, string>;
@@ -164,6 +171,11 @@ export interface TaskProgressReport {
     commitSha?: string;
     prUrl?: string;
     checksSummary?: string;
+    previewUrls?: string[];
+    reviewSummary?: string;
+    reviewDecision?: string;
+    reviewComments?: number;
+    changeRequests?: number;
     filesChanged?: string[];
     testOutput?: string;
   };

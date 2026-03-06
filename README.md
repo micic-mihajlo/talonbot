@@ -98,6 +98,7 @@ curl -s -H "Content-Type: application/json" \
 ```bash
 talonbot status
 talonbot operator
+talonbot agents
 talonbot doctor
 talonbot tasks list
 talonbot workers list
@@ -110,6 +111,7 @@ talonbot rollback previous
 
 - `GET /health`
 - `GET /status`
+- `GET /agents`
 - `POST /dispatch`
 - `GET /tasks`
 - `GET /tasks/:id`

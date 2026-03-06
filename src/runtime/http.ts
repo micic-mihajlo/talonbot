@@ -14,6 +14,7 @@ import { runSecurityAudit } from '../security/audit.js';
 import { createDiagnosticsBundle } from '../diagnostics/bundle.js';
 import { ensureDir } from '../utils/path.js';
 import type { ChatSdkTransport } from '../transports/chat-sdk/index.js';
+import { buildAgentRuntimeSnapshot } from './agents.js';
 
 export interface RuntimeServices {
   tasks?: TaskOrchestrator;
@@ -299,6 +300,17 @@ export const createHttpServer = (
         memory: services?.memoryStatus ? services.memoryStatus() : null,
         orchestration,
       });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/agents') {
+      if (!requireAuth(req, config, res)) return;
+      const snapshot = await buildAgentRuntimeSnapshot({
+        control,
+        tasks: services?.tasks,
+        sentry: services?.sentry,
+      });
+      writeJson(res, 200, snapshot);
       return;
     }
 

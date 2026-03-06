@@ -76,6 +76,8 @@ const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
   if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
   if (report?.evidence.commitSha) evidence.push(`commit ${report.evidence.commitSha}`);
   if (report?.evidence.checksSummary) evidence.push(`checks ${report.evidence.checksSummary}`);
+  if (report?.evidence.previewUrls?.length) evidence.push(`preview ${report.evidence.previewUrls.join(', ')}`);
+  if (report?.evidence.reviewSummary) evidence.push(`review ${report.evidence.reviewSummary}`);
   if (report?.evidence.branch) evidence.push(`branch ${report.evidence.branch}`);
   const evidenceLine = evidence.length > 0 ? ` Evidence: ${evidence.join(' | ')}.` : '';
 
