@@ -465,6 +465,10 @@ describe('control plane task-first dispatch', () => {
       taskIntent: 'implementation',
       requiresVerifiedPr: true,
       requiredArtifacts: ['pr'],
+      coordination: {
+        priority: 'normal',
+        sourceSummary: 'operator requested an implementation task via socket in software-engineering',
+      },
       sourceContext: {
         transport: 'socket',
         channelId: 'software-engineering',
@@ -474,7 +478,7 @@ describe('control plane task-first dispatch', () => {
       },
     });
     expect(engineCalls).toBe(0);
-    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+    expect(replies.some((text) => text.includes('Queued work item task-1'))).toBe(true);
 
     await waitFor(() => replies.some((text) => text.includes('Task task-1 completed')), 2000);
     expect(replies.some((text) => text.includes('github.com/acme/repo/pull/1'))).toBe(true);
@@ -629,7 +633,7 @@ describe('control plane task-first dispatch', () => {
       taskIntent: 'unknown',
       requiresVerifiedPr: false,
     });
-    expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);
+    expect(replies.some((text) => text.includes('Queued work item task-1'))).toBe(true);
     expect(replies.some((text) => text.includes('task-1'))).toBe(true);
   });
 

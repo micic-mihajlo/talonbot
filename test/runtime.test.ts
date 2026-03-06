@@ -275,6 +275,15 @@ describe('HTTP control runtime', () => {
         tmuxSessions: ['dev-agent-default-task-1'],
         orphanedSessions: [],
       }),
+      getWorkQueueSnapshot: () => ({
+        total: 1,
+        open: 1,
+        claimed: 0,
+        unclaimed: 1,
+        blocked: 1,
+        urgent: 0,
+        high: 1,
+      }),
       listWorkItems: () => [
         {
           id: 'task-1',
@@ -297,6 +306,12 @@ describe('HTTP control runtime', () => {
           createdAt: '2026-03-06T10:00:00.000Z',
           updatedAt: '2026-03-06T10:05:00.000Z',
           blockedReason: 'waiting on logs',
+          coordination: {
+            priority: 'high',
+            sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+            notes: [],
+            claimStatus: 'unclaimed',
+          },
           report: {
             taskId: 'task-1',
             title: 'Investigate flaky release checks',
@@ -334,6 +349,12 @@ describe('HTTP control runtime', () => {
               requiredArtifacts: ['summary'],
               createdAt: '2026-03-06T10:00:00.000Z',
               updatedAt: '2026-03-06T10:05:00.000Z',
+              coordination: {
+                priority: 'high',
+                sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+                notes: [],
+                claimStatus: 'unclaimed',
+              },
               report: {
                 taskId: 'task-1',
                 title: 'Investigate flaky release checks',
@@ -352,6 +373,43 @@ describe('HTTP control runtime', () => {
               },
             }
           : null,
+      claimWorkItem: async () => ({
+        id: 'task-1',
+        coordination: {
+          priority: 'high',
+          owner: 'mihajlo',
+          sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+          notes: [],
+          claimStatus: 'claimed',
+        },
+      }),
+      releaseWorkItem: async () => ({
+        id: 'task-1',
+        coordination: {
+          priority: 'high',
+          sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+          notes: [],
+          claimStatus: 'unclaimed',
+        },
+      }),
+      addWorkItemNote: async () => ({
+        id: 'task-1',
+        coordination: {
+          priority: 'high',
+          sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+          notes: [{ at: '2026-03-06T10:06:00.000Z', author: 'mihajlo', text: 'Waiting for logs' }],
+          claimStatus: 'unclaimed',
+        },
+      }),
+      setWorkItemPriority: async () => ({
+        id: 'task-1',
+        coordination: {
+          priority: 'urgent',
+          sourceSummary: 'Alex requested a research task via discord in engineering thread 123',
+          notes: [],
+          claimStatus: 'unclaimed',
+        },
+      }),
     };
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     httpServer = await createHttpServer(controlPlane, buildTestConfig(workingDirectory, path.join(workingDirectory, 'control.sock')), 0, undefined as any, {
@@ -374,6 +432,32 @@ describe('HTTP control runtime', () => {
     const workItem = await requestHttp<{ workItem: { id: string; report: { message: string } } }>(httpPort, '/work-items/task-1');
     expect(workItem.statusCode).toBe(200);
     expect(workItem.payload.workItem.report.message).toContain('Waiting on more logs');
+
+    const queue = await requestHttp<{ queue: { open: number; high: number } }>(httpPort, '/work-items/queue');
+    expect(queue.statusCode).toBe(200);
+    expect(queue.payload.queue).toMatchObject({ open: 1, high: 1 });
+
+    const claimed = await requestHttp<{ workItem: { coordination: { owner: string; claimStatus: string } } }>(
+      httpPort,
+      '/work-items/task-1/claim',
+      {
+        method: 'POST',
+        body: { owner: 'mihajlo' },
+      },
+    );
+    expect(claimed.statusCode).toBe(200);
+    expect(claimed.payload.workItem.coordination).toMatchObject({ owner: 'mihajlo', claimStatus: 'claimed' });
+
+    const noted = await requestHttp<{ workItem: { coordination: { notes: Array<{ text: string }> } } }>(
+      httpPort,
+      '/work-items/task-1/note',
+      {
+        method: 'POST',
+        body: { author: 'mihajlo', text: 'Waiting for logs' },
+      },
+    );
+    expect(noted.statusCode).toBe(200);
+    expect(noted.payload.workItem.coordination.notes[0]?.text).toContain('Waiting for logs');
 
     const agents = await requestHttp<{
       agents: Array<{ role: string; state: string; summary: string; package: { skillLoaded: boolean; skillPath?: string } }>;

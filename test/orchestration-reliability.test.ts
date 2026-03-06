@@ -142,6 +142,59 @@ describe('task orchestration reliability upgrades', () => {
     expect(report?.message).toContain('no completion artifacts');
   });
 
+  it('persists coordinator queue metadata for work items', async () => {
+    const repoDir = path.join(sandbox, 'repo-work-items');
+    await initGitRepo(repoDir);
+
+    orchestrator = new TaskOrchestrator(
+      buildConfig(sandbox, {
+        CHAT_REQUIRE_VERIFIED_PR: false,
+      }),
+    );
+    await orchestrator.initialize();
+    await orchestrator.registerRepo({
+      id: 'repo-work-items',
+      path: repoDir,
+      defaultBranch: 'main',
+      remote: 'origin',
+      isDefault: true,
+    });
+
+    const task = await orchestrator.submitTask({
+      text: 'Investigate flaky queue behavior.',
+      repoId: 'repo-work-items',
+      source: 'transport',
+      coordination: {
+        priority: 'high',
+        sourceSummary: 'operator requested a review task via socket in engineering',
+      },
+    });
+
+    await orchestrator.claimWorkItem(task.id, 'mihajlo');
+    await orchestrator.addWorkItemNote(task.id, 'mihajlo', 'Need logs from CI rerun');
+    await orchestrator.setWorkItemPriority(task.id, 'urgent');
+
+    const workItem = orchestrator.getWorkItem(task.id);
+    expect(workItem?.coordination).toMatchObject({
+      priority: 'urgent',
+      owner: 'mihajlo',
+      claimStatus: 'claimed',
+      sourceSummary: 'operator requested a review task via socket in engineering',
+    });
+    expect(workItem?.coordination.notes[0]?.text).toContain('Need logs');
+
+    const queue = orchestrator.getWorkQueueSnapshot();
+    expect(queue).toMatchObject({
+      total: 1,
+      open: 1,
+      claimed: 1,
+      urgent: 1,
+    });
+
+    await orchestrator.releaseWorkItem(task.id);
+    expect(orchestrator.getWorkItem(task.id)?.coordination.claimStatus).toBe('unclaimed');
+  });
+
   it('applies deterministic launcher cleanup policy for failed tasks', async () => {
     const repoDir = path.join(sandbox, 'repo-fail-cleanup');
     await initGitRepo(repoDir);

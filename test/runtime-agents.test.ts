@@ -69,6 +69,24 @@ describe('runtime agent lifecycle endpoints', () => {
     controlPlane = new ControlPlane(config, () => createEngine());
     await controlPlane.initialize();
     httpServer = await createHttpServer(controlPlane, config, 0, undefined as any, {
+      tasks: {
+        getWorkQueueSnapshot: () => ({
+          total: 4,
+          open: 3,
+          claimed: 1,
+          unclaimed: 2,
+          blocked: 1,
+          urgent: 1,
+          high: 1,
+        }),
+        getWorkerRuntimeSnapshot: async () => ({
+          runtime: 'mock',
+          activeTasks: [],
+          activeSessions: [],
+          tmuxSessions: [],
+          orphanedSessions: [],
+        }),
+      } as any,
       sentry: {
         isRunning: () => false,
         getStatus: () => ({
@@ -131,9 +149,22 @@ describe('runtime agent lifecycle endpoints', () => {
     const denied = await requestHttp<{ error: string }>(httpPort, '/agents/watchdog/start', { method: 'POST' });
     expect(denied.statusCode).toBe(401);
 
-    const list = await requestHttp<{ agents: Array<{ id: string; actions: string[] }> }>(httpPort, '/agents', { token });
+    const list = await requestHttp<{ agents: Array<{ id: string; actions: string[]; summary: string; metrics: Record<string, number> }> }>(
+      httpPort,
+      '/agents',
+      { token },
+    );
     expect(list.statusCode).toBe(200);
     expect(list.payload.agents.find((agent) => agent.id === 'watchdog')?.actions).toContain('start');
+    expect(list.payload.agents.find((agent) => agent.id === 'coordinator')).toMatchObject({
+      summary: 'Coordinator ready with 3 open work item(s), 2 unclaimed, and 0 active session(s).',
+      metrics: {
+        queueOpen: 3,
+        queueClaimed: 1,
+        queueUnclaimed: 2,
+        queueUrgent: 1,
+      },
+    });
 
     const started = await requestHttp<{ agent: { id: string; running: boolean } }>(httpPort, '/agents/watchdog/start', {
       method: 'POST',

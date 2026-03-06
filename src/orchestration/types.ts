@@ -16,6 +16,7 @@ export type TaskArtifactKind =
 
 export type TaskIntent = 'research' | 'review' | 'summarize' | 'implementation' | 'ops' | 'unknown';
 export type RequiredArtifactKind = 'summary' | 'branch' | 'commit' | 'pr';
+export type WorkItemPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export interface TaskSourceContext {
   transport: 'slack' | 'discord' | 'socket';
@@ -47,6 +48,21 @@ export interface TaskArtifact {
   details?: Record<string, string>;
 }
 
+export interface WorkItemNote {
+  at: string;
+  author: string;
+  text: string;
+}
+
+export interface WorkItemCoordination {
+  priority: WorkItemPriority;
+  owner?: string;
+  claimedAt?: string;
+  sourceSummary: string;
+  notes: WorkItemNote[];
+  lastCoordinatorActionAt?: string;
+}
+
 export interface TaskEvent {
   at: string;
   kind: string;
@@ -68,6 +84,7 @@ export interface TaskRecord {
   requiresVerifiedPr?: boolean;
   requiredArtifacts?: RequiredArtifactKind[];
   sourceContext?: TaskSourceContext;
+  coordination?: WorkItemCoordination;
   status: TaskStatus;
   state: TaskState;
   assignedSession: string;
@@ -122,6 +139,7 @@ export interface SubmitTaskInput {
   requirePrOverride?: boolean;
   requiredArtifacts?: RequiredArtifactKind[];
   sourceContext?: TaskSourceContext;
+  coordination?: Partial<WorkItemCoordination>;
 }
 
 export interface WorktreeInfo {
@@ -197,5 +215,8 @@ export interface WorkItemRecord {
   startedAt?: string;
   finishedAt?: string;
   blockedReason?: string;
+  coordination: WorkItemCoordination & {
+    claimStatus: 'unclaimed' | 'claimed';
+  };
   report: TaskProgressReport;
 }

@@ -415,6 +415,7 @@ const help = () => {
   process.stdout.write('  doctor\n');
   process.stdout.write('  env get|set|list|sync\n');
   process.stdout.write('  tasks list|get|create|retry|cancel\n');
+  process.stdout.write('  work-items list|get|queue|claim|release|note|priority\n');
   process.stdout.write('  workers list|cleanup|stop [--session <workerSession>]\n');
   process.stdout.write('  repos list|register|remove\n');
   process.stdout.write('  deploy|update [--source <path>]\n');
@@ -643,6 +644,62 @@ const main = async () => {
     }
 
     fail(`unknown tasks command: ${sub}`, 'Use: tasks list|get|create|retry|cancel');
+  }
+
+  if (command === 'work-items') {
+    const sub = args[0] || 'list';
+
+    if (sub === 'list') {
+      const state = args[1] ? `?state=${encodeURIComponent(args[1])}` : '';
+      json(await request('GET', `/work-items${state}`));
+      return;
+    }
+
+    if (sub === 'get') {
+      const id = args[1];
+      if (!id) fail('work item id required', 'Example: talonbot work-items get <work-item-id>');
+      json(await request('GET', `/work-items/${encodeURIComponent(id)}`));
+      return;
+    }
+
+    if (sub === 'queue') {
+      json(await request('GET', '/work-items/queue'));
+      return;
+    }
+
+    if (sub === 'claim') {
+      const id = args[1];
+      const owner = getFlag(args, 'owner') || args[2];
+      if (!id || !owner) fail('work-items claim requires <id> and --owner <name>', 'Example: talonbot work-items claim task-123 --owner mihajlo');
+      json(await request('POST', `/work-items/${encodeURIComponent(id)}/claim`, { owner }));
+      return;
+    }
+
+    if (sub === 'release') {
+      const id = args[1];
+      if (!id) fail('work item id required', 'Example: talonbot work-items release <work-item-id>');
+      json(await request('POST', `/work-items/${encodeURIComponent(id)}/release`));
+      return;
+    }
+
+    if (sub === 'note') {
+      const id = args[1];
+      const author = getFlag(args, 'author') || 'operator';
+      const text = getFlag(args, 'text') || args.slice(2).filter((arg) => !arg.startsWith('--')).join(' ');
+      if (!id || !text.trim()) fail('work-items note requires <id> and note text', 'Example: talonbot work-items note task-123 --author mihajlo --text "Waiting on API key"');
+      json(await request('POST', `/work-items/${encodeURIComponent(id)}/note`, { author, text }));
+      return;
+    }
+
+    if (sub === 'priority') {
+      const id = args[1];
+      const priority = getFlag(args, 'value') || args[2];
+      if (!id || !priority) fail('work-items priority requires <id> and <priority>', 'Example: talonbot work-items priority task-123 high');
+      json(await request('POST', `/work-items/${encodeURIComponent(id)}/priority`, { priority }));
+      return;
+    }
+
+    fail(`unknown work-items command: ${sub}`, 'Use: work-items list|get|queue|claim|release|note|priority');
   }
 
   if (command === 'workers') {

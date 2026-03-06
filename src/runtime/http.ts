@@ -139,12 +139,22 @@ const tryExtractTaskRoute = (pathname: string) => {
 
 const tryExtractWorkItemRoute = (pathname: string) => {
   const exact = pathname.match(/^\/work-items\/([^/]+)$/);
-  if (!exact) {
-    return null;
+  if (exact) {
+    return {
+      id: decodeURIComponent(exact[1]),
+      action: 'get' as const,
+    };
   }
-  return {
-    id: decodeURIComponent(exact[1]),
-  };
+
+  const action = pathname.match(/^\/work-items\/([^/]+)\/(claim|release|note|priority)$/);
+  if (action) {
+    return {
+      id: decodeURIComponent(action[1]),
+      action: action[2] as 'claim' | 'release' | 'note' | 'priority',
+    };
+  }
+
+  return null;
 };
 
 const toTaskPolicyHint = (
@@ -639,6 +649,16 @@ export const createHttpServer = (
       return;
     }
 
+    if (pathname === '/work-items/queue' && req.method === 'GET') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+      writeJson(res, 200, { queue: services.tasks.getWorkQueueSnapshot() });
+      return;
+    }
+
     if (pathname === '/tasks' && req.method === 'POST') {
       if (!requireAuth(req, config, res)) return;
       if (!services?.tasks) {
@@ -833,13 +853,56 @@ export const createHttpServer = (
         return;
       }
 
-      if (req.method === 'GET') {
+      if (workItemRoute.action === 'get' && req.method === 'GET') {
         const workItem = services.tasks.getWorkItem(workItemRoute.id);
         if (!workItem) {
           writeJson(res, 404, { error: 'work_item_not_found' });
           return;
         }
         writeJson(res, 200, { workItem });
+        return;
+      }
+
+      if (workItemRoute.action === 'claim' && req.method === 'POST') {
+        try {
+          const body = (await readJsonBody(req)) as { owner?: string };
+          const workItem = await services.tasks.claimWorkItem(workItemRoute.id, body.owner || '');
+          writeJson(res, 200, { workItem });
+        } catch (error) {
+          writeJson(res, 400, { error: (error as Error).message });
+        }
+        return;
+      }
+
+      if (workItemRoute.action === 'release' && req.method === 'POST') {
+        try {
+          const workItem = await services.tasks.releaseWorkItem(workItemRoute.id);
+          writeJson(res, 200, { workItem });
+        } catch (error) {
+          writeJson(res, 400, { error: (error as Error).message });
+        }
+        return;
+      }
+
+      if (workItemRoute.action === 'note' && req.method === 'POST') {
+        try {
+          const body = (await readJsonBody(req)) as { author?: string; text?: string };
+          const workItem = await services.tasks.addWorkItemNote(workItemRoute.id, body.author || '', body.text || '');
+          writeJson(res, 200, { workItem });
+        } catch (error) {
+          writeJson(res, 400, { error: (error as Error).message });
+        }
+        return;
+      }
+
+      if (workItemRoute.action === 'priority' && req.method === 'POST') {
+        try {
+          const body = (await readJsonBody(req)) as { priority?: 'low' | 'normal' | 'high' | 'urgent' };
+          const workItem = await services.tasks.setWorkItemPriority(workItemRoute.id, body.priority || 'normal');
+          writeJson(res, 200, { workItem });
+        } catch (error) {
+          writeJson(res, 400, { error: (error as Error).message });
+        }
         return;
       }
 

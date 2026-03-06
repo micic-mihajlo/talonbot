@@ -51,13 +51,17 @@ export const buildAgentRuntimeSnapshot = async (
   const byId = new Map(managed.map((entry) => [entry.id, entry] as const));
   const controlSessions = options.control.listSessions().length;
   const controlAliases = options.control.listAliases().length;
+  const queue = options.tasks?.getWorkQueueSnapshot?.();
   const agents: AgentRuntimeRecord[] = [
     {
       id: AGENT_PROFILES.control.id,
       role: 'control',
       enabled: byId.get(AGENT_PROFILES.control.id)?.desired.enabled ?? true,
       state: 'ready',
-      summary: `Control plane ready with ${controlSessions} active session(s) and ${controlAliases} alias(es).`,
+      summary:
+        queue && queue.open > 0
+          ? `Coordinator ready with ${queue.open} open work item(s), ${queue.unclaimed} unclaimed, and ${controlSessions} active session(s).`
+          : `Coordinator ready with ${controlSessions} active session(s) and ${controlAliases} alias(es).`,
       profile: AGENT_PROFILES.control,
       managedMode: byId.get(AGENT_PROFILES.control.id)?.managedMode ?? 'core',
       actions: byId.get(AGENT_PROFILES.control.id)?.actions ?? [],
@@ -72,6 +76,10 @@ export const buildAgentRuntimeSnapshot = async (
       metrics: {
         sessions: controlSessions,
         aliases: controlAliases,
+        queueOpen: queue?.open ?? 0,
+        queueClaimed: queue?.claimed ?? 0,
+        queueUnclaimed: queue?.unclaimed ?? 0,
+        queueUrgent: queue?.urgent ?? 0,
       },
     },
   ];
