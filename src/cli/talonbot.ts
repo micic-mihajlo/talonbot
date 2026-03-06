@@ -55,6 +55,39 @@ const getFlag = (args: string[], name: string, fallback = '') => {
   return fallback;
 };
 
+const collectPositionalArgs = (
+  args: string[],
+  options: {
+    skipLiterals?: string[];
+    valueFlags?: string[];
+  } = {},
+) => {
+  const skipLiterals = new Set(options.skipLiterals || []);
+  const valueFlags = (options.valueFlags || []).map((name) => `--${name}`);
+  const valuePrefixes = valueFlags.map((flag) => `${flag}=`);
+  const positionals: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (skipLiterals.has(arg)) {
+      continue;
+    }
+    if (valueFlags.includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (valuePrefixes.some((prefix) => arg.startsWith(prefix))) {
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      continue;
+    }
+    positionals.push(arg);
+  }
+
+  return positionals;
+};
+
 const hasFlag = (args: string[], name: string) => args.includes(name);
 
 const httpHint = (status: number) => {
@@ -615,7 +648,12 @@ const main = async () => {
 
     if (sub === 'create') {
       const repoId = getFlag(args, 'repo');
-      const text = getFlag(args, 'text') || args.filter((arg) => !arg.startsWith('--') && arg !== 'create').join(' ');
+      const text =
+        getFlag(args, 'text') ||
+        collectPositionalArgs(args, {
+          skipLiterals: ['create'],
+          valueFlags: ['repo', 'text', 'fanout'],
+        }).join(' ');
       const fanoutArg = getFlag(args, 'fanout');
       const fanout = fanoutArg ? fanoutArg.split('|').map((item) => item.trim()).filter(Boolean) : undefined;
       if (!text.trim()) fail('task text required', 'Example: talonbot tasks create --repo my-repo --text "Fix flaky CI"');
@@ -685,7 +723,11 @@ const main = async () => {
     if (sub === 'note') {
       const id = args[1];
       const author = getFlag(args, 'author') || 'operator';
-      const text = getFlag(args, 'text') || args.slice(2).filter((arg) => !arg.startsWith('--')).join(' ');
+      const text =
+        getFlag(args, 'text') ||
+        collectPositionalArgs(args.slice(2), {
+          valueFlags: ['author', 'text'],
+        }).join(' ');
       if (!id || !text.trim()) fail('work-items note requires <id> and note text', 'Example: talonbot work-items note task-123 --author mihajlo --text "Waiting on API key"');
       json(await request('POST', `/work-items/${encodeURIComponent(id)}/note`, { author, text }));
       return;
