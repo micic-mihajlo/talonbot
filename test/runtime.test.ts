@@ -254,6 +254,101 @@ describe('HTTP control runtime', () => {
     expect(Array.isArray(status.payload.sessions)).toBe(true);
     expect(Array.isArray(status.payload.aliases)).toBe(true);
   });
+
+  it('serves work-item views for orchestrated tasks', async () => {
+    const fakeTasks = {
+      listWorkItems: () => [
+        {
+          id: 'task-1',
+          taskId: 'task-1',
+          title: 'Investigate flaky release checks',
+          text: 'Investigate flaky release checks and summarize the root cause.',
+          source: 'transport',
+          status: 'blocked',
+          repoId: 'default',
+          taskIntent: 'research',
+          requiredArtifacts: ['summary'],
+          sourceContext: {
+            transport: 'discord',
+            channelId: 'engineering',
+            threadId: '123',
+            senderId: 'U123',
+            senderName: 'Alex',
+            receivedAt: '2026-03-06T10:00:00.000Z',
+          },
+          createdAt: '2026-03-06T10:00:00.000Z',
+          updatedAt: '2026-03-06T10:05:00.000Z',
+          blockedReason: 'waiting on logs',
+          report: {
+            taskId: 'task-1',
+            title: 'Investigate flaky release checks',
+            repoId: 'default',
+            status: 'blocked',
+            taskIntent: 'research',
+            requiredArtifacts: ['summary'],
+            artifactState: 'artifact-backed',
+            generatedAt: '2026-03-06T10:05:00.000Z',
+            message: 'Waiting on more logs.',
+            sourceContext: {
+              transport: 'discord',
+              channelId: 'engineering',
+              threadId: '123',
+            },
+            evidence: {},
+          },
+        },
+      ],
+      getWorkItem: (id: string) =>
+        id === 'task-1'
+          ? {
+              id: 'task-1',
+              taskId: 'task-1',
+              title: 'Investigate flaky release checks',
+              text: 'Investigate flaky release checks and summarize the root cause.',
+              source: 'transport',
+              status: 'blocked',
+              repoId: 'default',
+              taskIntent: 'research',
+              requiredArtifacts: ['summary'],
+              createdAt: '2026-03-06T10:00:00.000Z',
+              updatedAt: '2026-03-06T10:05:00.000Z',
+              report: {
+                taskId: 'task-1',
+                title: 'Investigate flaky release checks',
+                repoId: 'default',
+                status: 'blocked',
+                taskIntent: 'research',
+                requiredArtifacts: ['summary'],
+                artifactState: 'artifact-backed',
+                generatedAt: '2026-03-06T10:05:00.000Z',
+                message: 'Waiting on more logs.',
+                evidence: {},
+              },
+            }
+          : null,
+    };
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    httpServer = await createHttpServer(controlPlane, buildTestConfig(workingDirectory, path.join(workingDirectory, 'control.sock')), 0, undefined as any, {
+      tasks: fakeTasks as any,
+    });
+    httpPort = (httpServer.address() as AddressInfo).port;
+
+    const workItems = await requestHttp<{ workItems: Array<{ id: string; title: string; taskIntent: string }> }>(
+      httpPort,
+      '/work-items',
+    );
+    expect(workItems.statusCode).toBe(200);
+    expect(workItems.payload.workItems).toHaveLength(1);
+    expect(workItems.payload.workItems[0]).toMatchObject({
+      id: 'task-1',
+      title: 'Investigate flaky release checks',
+      taskIntent: 'research',
+    });
+
+    const workItem = await requestHttp<{ workItem: { id: string; report: { message: string } } }>(httpPort, '/work-items/task-1');
+    expect(workItem.statusCode).toBe(200);
+    expect(workItem.payload.workItem.report.message).toContain('Waiting on more logs');
+  });
 });
 
 describe('socket control runtime', () => {

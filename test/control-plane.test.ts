@@ -465,6 +465,13 @@ describe('control plane task-first dispatch', () => {
       taskIntent: 'implementation',
       requiresVerifiedPr: true,
       requiredArtifacts: ['pr'],
+      sourceContext: {
+        transport: 'socket',
+        channelId: 'software-engineering',
+        threadId: undefined,
+        senderId: 'operator',
+        senderName: 'operator',
+      },
     });
     expect(engineCalls).toBe(0);
     expect(replies.some((text) => text.includes('Queued task task-1'))).toBe(true);

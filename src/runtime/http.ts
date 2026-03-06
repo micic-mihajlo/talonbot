@@ -134,6 +134,16 @@ const tryExtractTaskRoute = (pathname: string) => {
   return null;
 };
 
+const tryExtractWorkItemRoute = (pathname: string) => {
+  const exact = pathname.match(/^\/work-items\/([^/]+)$/);
+  if (!exact) {
+    return null;
+  }
+  return {
+    id: decodeURIComponent(exact[1]),
+  };
+};
+
 const toTaskPolicyHint = (
   body: Partial<ControlDispatchPayload>,
 ): {
@@ -540,6 +550,20 @@ export const createHttpServer = (
       return;
     }
 
+    if (pathname === '/work-items' && req.method === 'GET') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+
+      const state = url.searchParams.get('state');
+      const workItems = services.tasks.listWorkItems();
+      const filtered = state ? workItems.filter((item) => item.status === state) : workItems;
+      writeJson(res, 200, { workItems: filtered });
+      return;
+    }
+
     if (pathname === '/tasks' && req.method === 'POST') {
       if (!requireAuth(req, config, res)) return;
       if (!services?.tasks) {
@@ -551,6 +575,7 @@ export const createHttpServer = (
         const body = (await readJsonBody(req)) as {
           text?: string;
           repoId?: string;
+          title?: string;
           sessionKey?: string;
           source?: 'transport' | 'webhook' | 'operator' | 'system';
           fanout?: string[];
@@ -558,6 +583,21 @@ export const createHttpServer = (
           requiresVerifiedPr?: boolean;
           requirePrOverride?: boolean;
           requiredArtifacts?: Array<'summary' | 'branch' | 'commit' | 'pr'>;
+          sourceContext?: {
+            transport?: 'slack' | 'discord' | 'socket';
+            channelId?: string;
+            threadId?: string | null;
+            messageId?: string;
+            senderId?: string;
+            senderName?: string;
+            receivedAt?: string;
+          };
+          sourceChannelId?: string;
+          sourceThreadId?: string | null;
+          sourceMessageId?: string;
+          senderId?: string;
+          senderName?: string;
+          receivedAt?: string;
         };
 
         if (!body.text || !body.text.trim()) {
@@ -568,6 +608,7 @@ export const createHttpServer = (
         const task = await services.tasks.submitTask({
           text: body.text,
           repoId: body.repoId,
+          title: body.title,
           sessionKey: body.sessionKey,
           source: body.source,
           fanout: body.fanout,
@@ -575,6 +616,35 @@ export const createHttpServer = (
           requiresVerifiedPr: body.requiresVerifiedPr,
           requirePrOverride: body.requirePrOverride,
           requiredArtifacts: body.requiredArtifacts,
+          sourceContext: (() => {
+            if (
+              body.sourceContext?.transport &&
+              typeof body.sourceContext.channelId === 'string' &&
+              body.sourceContext.channelId.trim()
+            ) {
+              return {
+                transport: body.sourceContext.transport,
+                channelId: body.sourceContext.channelId,
+                threadId: body.sourceContext.threadId,
+                messageId: body.sourceContext.messageId,
+                senderId: body.sourceContext.senderId,
+                senderName: body.sourceContext.senderName,
+                receivedAt: body.sourceContext.receivedAt,
+              };
+            }
+            if (body.sourceChannelId) {
+              return {
+                transport: 'socket' as const,
+                channelId: body.sourceChannelId,
+                threadId: body.sourceThreadId,
+                messageId: body.sourceMessageId,
+                senderId: body.senderId,
+                senderName: body.senderName,
+                receivedAt: body.receivedAt,
+              };
+            }
+            return undefined;
+          })(),
         });
 
         writeJson(res, 200, { task });
@@ -673,6 +743,28 @@ export const createHttpServer = (
       if (taskRoute.action === 'cancel' && req.method === 'POST') {
         const cancelled = await services.tasks.cancelTask(taskRoute.id);
         writeJson(res, 200, { cancelled });
+        return;
+      }
+
+      writeJson(res, 405, { error: 'method_not_allowed' });
+      return;
+    }
+
+    const workItemRoute = tryExtractWorkItemRoute(pathname);
+    if (workItemRoute) {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.tasks) {
+        writeJson(res, 501, { error: 'task_orchestrator_not_configured' });
+        return;
+      }
+
+      if (req.method === 'GET') {
+        const workItem = services.tasks.getWorkItem(workItemRoute.id);
+        if (!workItem) {
+          writeJson(res, 404, { error: 'work_item_not_found' });
+          return;
+        }
+        writeJson(res, 200, { workItem });
         return;
       }
 

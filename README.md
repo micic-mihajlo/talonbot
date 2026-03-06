@@ -114,6 +114,8 @@ talonbot rollback previous
 - `GET /tasks`
 - `GET /tasks/:id`
 - `GET /tasks/:id/report`
+- `GET /work-items`
+- `GET /work-items/:id`
 - `POST /tasks/:id/retry`
 - `POST /tasks/:id/cancel`
 - `GET /workers`

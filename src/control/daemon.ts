@@ -1114,6 +1114,15 @@ export class ControlPlane {
         taskIntent: policy.taskIntent,
         requiresVerifiedPr: policy.requiresVerifiedPr,
         requiredArtifacts: policy.requiredArtifacts,
+        sourceContext: {
+          transport: message.source,
+          channelId: message.sourceChannelId,
+          threadId: message.sourceThreadId,
+          messageId: message.sourceMessageId,
+          senderId: message.senderId,
+          senderName: message.senderName,
+          receivedAt: message.receivedAt,
+        },
       });
 
       await this.trackTaskBinding(task.id, sessionKey, message);

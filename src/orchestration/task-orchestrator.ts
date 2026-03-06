@@ -16,8 +16,10 @@ import type {
   TaskProgressReport,
   TaskIntent,
   TaskRecord,
+  TaskSourceContext,
   TaskSnapshot,
   TaskStatus,
+  WorkItemRecord,
 } from './types.js';
 import { RepoRegistry } from './repo-registry.js';
 import { WorktreeManager } from './worktree-manager.js';
@@ -29,6 +31,43 @@ import { extractGitHubPullRequestUrls, verifyGitHubPullRequestUrl } from '../uti
 import { createLogger } from '../utils/logger.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const buildTaskTitle = (text: string, fallback = 'Untitled task') => {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized.length <= 72) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 69).trimEnd()}...`;
+};
+
+const normalizeSourceContext = (input?: TaskSourceContext): TaskSourceContext | undefined => {
+  if (!input) {
+    return undefined;
+  }
+  const transport =
+    input.transport === 'slack' || input.transport === 'discord' || input.transport === 'socket' ? input.transport : null;
+  const channelId = typeof input.channelId === 'string' ? input.channelId.trim() : '';
+  if (!transport || !channelId) {
+    return undefined;
+  }
+  const threadId = typeof input.threadId === 'string' ? input.threadId.trim() : input.threadId === null ? null : undefined;
+  const messageId = typeof input.messageId === 'string' && input.messageId.trim() ? input.messageId.trim() : undefined;
+  const senderId = typeof input.senderId === 'string' && input.senderId.trim() ? input.senderId.trim() : undefined;
+  const senderName = typeof input.senderName === 'string' && input.senderName.trim() ? input.senderName.trim() : undefined;
+  const receivedAt = typeof input.receivedAt === 'string' && input.receivedAt.trim() ? input.receivedAt.trim() : undefined;
+  return {
+    transport,
+    channelId,
+    threadId,
+    messageId,
+    senderId,
+    senderName,
+    receivedAt,
+  };
+};
 
 const normalizeArtifactKinds = (artifacts?: ReadonlyArray<string> | undefined): RequiredArtifactKind[] | undefined => {
   if (!artifacts?.length) {
@@ -300,6 +339,16 @@ export class TaskOrchestrator {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  listWorkItems() {
+    return this.listTasks().map((task) => this.toWorkItem(task));
+  }
+
+  getWorkItem(workItemId: string) {
+    const task = this.getTask(workItemId);
+    if (!task) return null;
+    return this.toWorkItem(task);
+  }
+
   getTask(taskId: string) {
     return this.tasks.get(taskId) || null;
   }
@@ -477,6 +526,7 @@ export class TaskOrchestrator {
     const task = this.createTask({
       source,
       text: input.text,
+      title: input.title,
       repoId: repo.id,
       targetRepoFullName: input.targetRepoFullName,
       engineTimeoutMs: input.engineTimeoutMs,
@@ -486,6 +536,7 @@ export class TaskOrchestrator {
       requirePrOverride: input.requirePrOverride,
       requiresVerifiedPr: input.requiresVerifiedPr,
       requiredArtifacts: input.requiredArtifacts,
+      sourceContext: input.sourceContext,
     });
 
     this.tasks.set(task.id, task);
@@ -571,6 +622,7 @@ export class TaskOrchestrator {
     const parent = this.createTask({
       source: input.source || 'operator',
       text: input.text,
+      title: input.title,
       repoId: repo.id,
       targetRepoFullName: input.targetRepoFullName,
       engineTimeoutMs: input.engineTimeoutMs,
@@ -580,6 +632,7 @@ export class TaskOrchestrator {
       requirePrOverride: input.requirePrOverride,
       requiresVerifiedPr: input.requiresVerifiedPr,
       requiredArtifacts: input.requiredArtifacts,
+      sourceContext: input.sourceContext,
       status: 'blocked',
     });
 
@@ -590,6 +643,7 @@ export class TaskOrchestrator {
       const child = this.createTask({
         source: input.source || 'operator',
         text: childPrompt,
+        title: buildTaskTitle(childPrompt),
         repoId: repo.id,
         targetRepoFullName: input.targetRepoFullName,
         engineTimeoutMs: input.engineTimeoutMs,
@@ -599,6 +653,7 @@ export class TaskOrchestrator {
         requirePrOverride: input.requirePrOverride,
         requiresVerifiedPr: input.requiresVerifiedPr,
         requiredArtifacts: input.requiredArtifacts,
+        sourceContext: input.sourceContext,
       });
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
@@ -614,6 +669,7 @@ export class TaskOrchestrator {
   private createTask(input: {
     source: TaskRecord['source'];
     text: string;
+    title?: string;
     repoId: string;
     targetRepoFullName?: string;
     engineTimeoutMs?: number;
@@ -624,11 +680,13 @@ export class TaskOrchestrator {
     requiresVerifiedPr?: boolean;
     requirePrOverride?: boolean;
     requiredArtifacts?: SubmitTaskInput['requiredArtifacts'];
+    sourceContext?: TaskSourceContext;
   }): TaskRecord {
     const now = new Date().toISOString();
     const id = randomId('task');
     const status = input.status || 'queued';
     const assignedSession = this.launcher.assignedSession(input.repoId, id, input.text);
+    const title = buildTaskTitle(input.title || input.text);
     const inferredTaskIntent = inferTaskIntent(input.text);
     const configuredIntent = isTaskIntent(input.taskIntent) ? input.taskIntent : inferredTaskIntent;
     const requiresVerifiedPr =
@@ -649,6 +707,7 @@ export class TaskOrchestrator {
       id,
       parentTaskId: input.parentTaskId,
       sessionKey: input.sessionKey,
+      title,
       taskIntent: configuredIntent,
       requiresVerifiedPr,
       requiredArtifacts: uniqueArtifacts(
@@ -657,6 +716,7 @@ export class TaskOrchestrator {
       source: input.source,
       text: input.text,
       repoId: input.repoId,
+      sourceContext: normalizeSourceContext(input.sourceContext),
       targetRepoFullName: typeof input.targetRepoFullName === 'string' && input.targetRepoFullName.trim()
         ? input.targetRepoFullName.trim()
         : undefined,
@@ -1707,11 +1767,38 @@ export class TaskOrchestrator {
 
     return {
       taskId: task.id,
+      title: task.title,
+      repoId: task.repoId,
       status: task.status,
+      taskIntent: isTaskIntent(task.taskIntent) ? task.taskIntent : inferTaskIntent(task.text),
+      requiredArtifacts: uniqueArtifacts(normalizeArtifactKinds(task.requiredArtifacts) || (task.requiresVerifiedPr ? ['pr'] : ['summary'])),
       artifactState,
       generatedAt: new Date().toISOString(),
       message,
+      sourceContext: task.sourceContext,
       evidence,
+    };
+  }
+
+  private toWorkItem(task: TaskRecord): WorkItemRecord {
+    const report = this.buildProgressReport(task);
+    return {
+      id: task.id,
+      taskId: task.id,
+      title: task.title,
+      text: task.text,
+      source: task.source,
+      status: task.status,
+      repoId: task.repoId,
+      taskIntent: report.taskIntent,
+      requiredArtifacts: report.requiredArtifacts,
+      sourceContext: task.sourceContext,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      startedAt: task.startedAt,
+      finishedAt: task.finishedAt,
+      blockedReason: task.status === 'blocked' ? task.error : undefined,
+      report,
     };
   }
 
@@ -1778,8 +1865,10 @@ export class TaskOrchestrator {
       parentTaskId: typeof raw.parentTaskId === 'string' ? raw.parentTaskId : undefined,
       sessionKey: typeof raw.sessionKey === 'string' ? raw.sessionKey : undefined,
       source: raw.source === 'transport' || raw.source === 'webhook' || raw.source === 'operator' || raw.source === 'system' ? raw.source : 'operator',
+      title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : buildTaskTitle(typeof raw.text === 'string' ? raw.text : ''),
       text: typeof raw.text === 'string' ? raw.text : '',
       repoId: typeof raw.repoId === 'string' ? raw.repoId : '',
+      sourceContext: normalizeSourceContext(raw.sourceContext),
       targetRepoFullName:
         typeof raw.targetRepoFullName === 'string' && raw.targetRepoFullName.trim()
           ? raw.targetRepoFullName.trim()
