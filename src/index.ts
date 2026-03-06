@@ -17,8 +17,9 @@ import {
 import { TaskOrchestrator } from './orchestration/task-orchestrator.js';
 import { BridgeSupervisor } from './bridge/supervisor.js';
 import { ReleaseManager } from './ops/release-manager.js';
-import { SentryAgent } from './orchestration/sentry-agent.js';
 import { EventDedupeGuard } from './transports/event-dedupe.js';
+import { WatchdogService } from './runtime/watchdog-service.js';
+import { AgentLifecycleManager } from './runtime/agent-manager.js';
 
 const logger = createLogger('talonbot', config.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error');
 
@@ -80,6 +81,7 @@ const run = async () => {
     at: string;
     orchestrationHealth?: unknown;
     workerCleanup?: unknown;
+    agentLifecycle?: unknown;
     errors: string[];
   } = {
     at: new Date().toISOString(),
@@ -104,22 +106,19 @@ const run = async () => {
   await control.initialize();
   const socketServer = await createSocketServer(control, config, createLogger('runtime.socket', config.LOG_LEVEL as any));
 
-  const sentry = config.SENTRY_ENABLED
-    ? new SentryAgent({
-        pollMs: config.SENTRY_POLL_MS,
-        stateFile: config.SENTRY_STATE_FILE,
-        listTasks: () => taskOrchestrator.listTasks(),
-        onEscalation: async (incident) => {
-          logger.error(
-            `sentry escalation detected task=${incident.taskId} repo=${incident.repoId} state=${incident.state} error=${normalizeIncidentError(incident.error)}`,
-          );
-        },
-      })
-    : null;
-  if (sentry) {
-    await sentry.initialize();
-    sentry.start();
-  }
+  const watchdog = new WatchdogService(config, taskOrchestrator, async (incident) => {
+    logger.error(
+      `watchdog escalation detected task=${incident.taskId} repo=${incident.repoId} state=${incident.state} error=${normalizeIncidentError(incident.error)}`,
+    );
+  });
+  const agentManager = new AgentLifecycleManager(config, {
+    watchdog,
+  });
+  await agentManager.initialize();
+  startupReconciliation.agentLifecycle = await agentManager.reconcile().catch((error) => ({
+    at: new Date().toISOString(),
+    error: error instanceof Error ? error.message : String(error),
+  }));
 
   const bridge = new BridgeSupervisor({
     sharedSecret: config.BRIDGE_SHARED_SECRET,
@@ -198,7 +197,8 @@ const run = async () => {
         tasks: taskOrchestrator,
         bridge: config.ENABLE_WEBHOOK_BRIDGE ? bridge : undefined,
         release: releaseManager,
-        sentry: sentry || undefined,
+        sentry: watchdog,
+        agentManager,
         diagnosticsOutputDir: path.join(config.DATA_DIR.replace('~', process.env.HOME || ''), 'diagnostics'),
         startupReconciliation,
         chatSdkTransport,
@@ -235,7 +235,7 @@ const run = async () => {
 
   const shutdown = async () => {
     logger.info('shutdown signal received');
-    sentry?.stop();
+    await watchdog.stop();
     bridge.stop();
     await taskOrchestrator.stop();
     await control.stop();

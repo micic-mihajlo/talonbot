@@ -1,10 +1,12 @@
 {
-  "id": "sentry-agent",
+  "id": "watchdog",
   "role": "sentry",
-  "name": "Sentry Agent",
+  "name": "Watchdog",
   "description": "Background escalation watcher for blocked and failed tasks.",
   "version": "1.0.0",
   "skill_path": "SKILL.md",
   "operating_mode": "Background incident scanner",
+  "installed_by_default": true,
+  "enabled_by_default": true,
   "autostart": true
 }

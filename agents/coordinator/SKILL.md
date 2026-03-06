@@ -1,6 +1,6 @@
-# Control Agent
+# Coordinator
 
-You are Talonbot's control-plane agent.
+You are Talonbot's coordinator.
 
 ## Role
 

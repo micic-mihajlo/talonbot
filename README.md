@@ -99,6 +99,7 @@ curl -s -H "Content-Type: application/json" \
 talonbot status
 talonbot operator
 talonbot agents
+talonbot agents reconcile
 talonbot doctor
 talonbot tasks list
 talonbot workers list
@@ -116,15 +117,18 @@ Built-in role skills live under `agents/<agent-id>/`:
 
 Current built-ins:
 
-- `agents/control-agent/`
-- `agents/worker-agent/`
-- `agents/sentry-agent/`
+- `agents/coordinator/`
+- `agents/worker/`
+- `agents/watchdog/`
 
 ## API surface (most-used)
 
 - `GET /health`
 - `GET /status`
 - `GET /agents`
+- `POST /agents/reconcile`
+- `POST /agents/:id/start`
+- `POST /agents/:id/stop`
 - `POST /dispatch`
 - `GET /tasks`
 - `GET /tasks/:id`

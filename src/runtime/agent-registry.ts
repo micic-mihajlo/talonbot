@@ -10,6 +10,8 @@ export interface AgentManifest {
   version?: string;
   skill_path: string;
   operating_mode?: string;
+  installed_by_default?: boolean;
+  enabled_by_default?: boolean;
   autostart?: boolean;
 }
 
@@ -80,6 +82,8 @@ const parseManifest = (raw: unknown, manifestPath: string): { manifest?: AgentMa
       version: typeof raw.version === 'string' ? raw.version.trim() || undefined : undefined,
       skill_path: typeof raw.skill_path === 'string' && raw.skill_path.trim() ? raw.skill_path.trim() : 'SKILL.md',
       operating_mode: typeof raw.operating_mode === 'string' ? raw.operating_mode.trim() || undefined : undefined,
+      installed_by_default: typeof raw.installed_by_default === 'boolean' ? raw.installed_by_default : undefined,
+      enabled_by_default: typeof raw.enabled_by_default === 'boolean' ? raw.enabled_by_default : undefined,
       autostart: typeof raw.autostart === 'boolean' ? raw.autostart : undefined,
     },
   };

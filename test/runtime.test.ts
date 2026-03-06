@@ -388,7 +388,7 @@ describe('HTTP control runtime', () => {
       state: 'disabled',
     });
     expect(agents.payload.agents.every((agent) => agent.package.skillLoaded)).toBe(true);
-    expect(agents.payload.agents.find((agent) => agent.role === 'worker')?.package.skillPath).toContain('/agents/worker-agent/SKILL.md');
+    expect(agents.payload.agents.find((agent) => agent.role === 'worker')?.package.skillPath).toContain('/agents/worker/SKILL.md');
     expect(agents.payload.diagnostics).toEqual([]);
   });
 });

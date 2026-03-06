@@ -1,10 +1,12 @@
 {
-  "id": "control-agent",
+  "id": "coordinator",
   "role": "control",
-  "name": "Control Agent",
+  "name": "Coordinator",
   "description": "Persistent task intake, orchestration, and operator-facing coordination.",
   "version": "1.0.0",
   "skill_path": "SKILL.md",
   "operating_mode": "Always-on coordinator",
+  "installed_by_default": true,
+  "enabled_by_default": true,
   "autostart": true
 }

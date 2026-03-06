@@ -178,8 +178,8 @@ const buildSyntheticEvent = (sessionKey: string, text: string) => ({
   source: 'socket' as const,
   sourceChannelId: sessionKey,
   sourceMessageId: randomId('task-message'),
-  senderId: 'control-agent',
-  senderName: 'control-agent',
+  senderId: 'coordinator',
+  senderName: 'coordinator',
   senderIsBot: false,
   text,
   mentionsBot: true,
@@ -1454,7 +1454,7 @@ export class TaskOrchestrator {
       sessionKey: task.assignedSession,
       route: `task:${task.id}`,
       text: prompt,
-      senderId: 'control-agent',
+      senderId: 'coordinator',
       metadata: {
         taskId: task.id,
         repoId: repo.id,
@@ -1481,7 +1481,7 @@ export class TaskOrchestrator {
       kind: 'agent_turn',
       route: `task:${task.id}`,
       session: task.assignedSession,
-      sender: 'control-agent',
+      sender: 'coordinator',
       message: prompt,
       metadata: {
         taskId: task.id,

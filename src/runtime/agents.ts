@@ -1,8 +1,9 @@
 import type { ControlPlane } from '../control/index.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
-import type { SentryAgent } from '../orchestration/sentry-agent.js';
 import { AGENT_PROFILES, type AgentProfile, type AgentRole, type AgentRuntimeState } from '../orchestration/agent-profiles.js';
 import { discoverAgentPackages, resolveAgentsDir } from './agent-registry.js';
+import type { WatchdogService } from './watchdog-service.js';
+import type { AgentLifecycleManager, AgentAction, AgentManagedMode } from './agent-manager.js';
 
 export interface AgentRuntimeRecord {
   id: string;
@@ -11,6 +12,14 @@ export interface AgentRuntimeRecord {
   state: AgentRuntimeState;
   summary: string;
   profile: AgentProfile;
+  managedMode: AgentManagedMode;
+  actions: AgentAction[];
+  desired: {
+    installed: boolean;
+    enabled: boolean;
+    autostart: boolean;
+  };
+  running: boolean;
   package: {
     version?: string;
     manifestPath?: string;
@@ -29,24 +38,31 @@ export interface AgentRuntimeSnapshot {
 interface BuildAgentRuntimeSnapshotOptions {
   control: ControlPlane;
   tasks?: TaskOrchestrator;
-  sentry?: SentryAgent;
+  sentry?: WatchdogService;
+  agentManager?: AgentLifecycleManager;
 }
 
 export const buildAgentRuntimeSnapshot = async (
   options: BuildAgentRuntimeSnapshotOptions,
 ): Promise<AgentRuntimeSnapshot> => {
   const discovery = discoverAgentPackages(resolveAgentsDir());
+  const managed = options.agentManager?.listManagedAgents() || [];
   const byRole = new Map(discovery.packages.map((entry) => [entry.manifest.role, entry] as const));
+  const byId = new Map(managed.map((entry) => [entry.id, entry] as const));
   const controlSessions = options.control.listSessions().length;
   const controlAliases = options.control.listAliases().length;
   const agents: AgentRuntimeRecord[] = [
     {
       id: AGENT_PROFILES.control.id,
       role: 'control',
-      enabled: true,
+      enabled: byId.get(AGENT_PROFILES.control.id)?.desired.enabled ?? true,
       state: 'ready',
       summary: `Control plane ready with ${controlSessions} active session(s) and ${controlAliases} alias(es).`,
       profile: AGENT_PROFILES.control,
+      managedMode: byId.get(AGENT_PROFILES.control.id)?.managedMode ?? 'core',
+      actions: byId.get(AGENT_PROFILES.control.id)?.actions ?? [],
+      desired: byId.get(AGENT_PROFILES.control.id)?.desired ?? { installed: true, enabled: true, autostart: true },
+      running: byId.get(AGENT_PROFILES.control.id)?.running ?? true,
       package: {
         version: byRole.get('control')?.manifest.version,
         manifestPath: byRole.get('control')?.manifestPath,
@@ -64,10 +80,11 @@ export const buildAgentRuntimeSnapshot = async (
     const workerSnapshot = await options.tasks.getWorkerRuntimeSnapshot();
     const activeTasks = workerSnapshot.activeTasks.length;
     const orphanedSessions = workerSnapshot.orphanedSessions.length;
+    const workerManaged = byId.get(AGENT_PROFILES.worker.id);
     agents.push({
       id: AGENT_PROFILES.worker.id,
       role: 'worker',
-      enabled: true,
+      enabled: workerManaged?.desired.enabled ?? true,
       state: activeTasks > 0 ? 'running' : orphanedSessions > 0 ? 'degraded' : 'idle',
       summary:
         activeTasks > 0
@@ -76,6 +93,10 @@ export const buildAgentRuntimeSnapshot = async (
           ? `Worker runtime ${workerSnapshot.runtime} has ${orphanedSessions} orphaned session(s).`
           : `Worker runtime ${workerSnapshot.runtime} is idle.`,
       profile: AGENT_PROFILES.worker,
+      managedMode: workerManaged?.managedMode ?? 'task',
+      actions: workerManaged?.actions ?? [],
+      desired: workerManaged?.desired ?? { installed: true, enabled: true, autostart: false },
+      running: workerManaged?.running ?? activeTasks > 0,
       package: {
         version: byRole.get('worker')?.manifest.version,
         manifestPath: byRole.get('worker')?.manifestPath,
@@ -91,13 +112,18 @@ export const buildAgentRuntimeSnapshot = async (
       },
     });
   } else {
+    const workerManaged = byId.get(AGENT_PROFILES.worker.id);
     agents.push({
       id: AGENT_PROFILES.worker.id,
       role: 'worker',
-      enabled: false,
+      enabled: workerManaged?.desired.enabled ?? false,
       state: 'disabled',
       summary: 'Worker runtime is not configured.',
       profile: AGENT_PROFILES.worker,
+      managedMode: workerManaged?.managedMode ?? 'task',
+      actions: workerManaged?.actions ?? [],
+      desired: workerManaged?.desired ?? { installed: true, enabled: true, autostart: false },
+      running: workerManaged?.running ?? false,
       package: {
         version: byRole.get('worker')?.manifest.version,
         manifestPath: byRole.get('worker')?.manifestPath,
@@ -116,16 +142,23 @@ export const buildAgentRuntimeSnapshot = async (
 
   if (options.sentry) {
     const status = options.sentry.getStatus();
+    const sentryManaged = byId.get(AGENT_PROFILES.sentry.id);
     agents.push({
       id: AGENT_PROFILES.sentry.id,
       role: 'sentry',
-      enabled: true,
-      state: status.incidents > 0 ? 'degraded' : 'idle',
+      enabled: sentryManaged?.desired.enabled ?? true,
+      state: !options.sentry.isRunning() ? 'disabled' : status.incidents > 0 ? 'degraded' : 'idle',
       summary:
-        status.incidents > 0
-          ? `Sentry is tracking ${status.incidents} escalation incident(s).`
-          : 'Sentry is idle with no active incidents.',
+        !options.sentry.isRunning()
+          ? 'Watchdog is configured but not running.'
+          : status.incidents > 0
+          ? `Watchdog is tracking ${status.incidents} escalation incident(s).`
+          : 'Watchdog is idle with no active incidents.',
       profile: AGENT_PROFILES.sentry,
+      managedMode: sentryManaged?.managedMode ?? 'service',
+      actions: sentryManaged?.actions ?? [],
+      desired: sentryManaged?.desired ?? { installed: true, enabled: true, autostart: true },
+      running: sentryManaged?.running ?? options.sentry.isRunning(),
       package: {
         version: byRole.get('sentry')?.manifest.version,
         manifestPath: byRole.get('sentry')?.manifestPath,
@@ -140,13 +173,18 @@ export const buildAgentRuntimeSnapshot = async (
       },
     });
   } else {
+    const sentryManaged = byId.get(AGENT_PROFILES.sentry.id);
     agents.push({
       id: AGENT_PROFILES.sentry.id,
       role: 'sentry',
-      enabled: false,
+      enabled: sentryManaged?.desired.enabled ?? false,
       state: 'disabled',
-      summary: 'Sentry is disabled.',
+      summary: 'Watchdog is disabled.',
       profile: AGENT_PROFILES.sentry,
+      managedMode: sentryManaged?.managedMode ?? 'service',
+      actions: sentryManaged?.actions ?? [],
+      desired: sentryManaged?.desired ?? { installed: true, enabled: true, autostart: true },
+      running: sentryManaged?.running ?? false,
       package: {
         version: byRole.get('sentry')?.manifest.version,
         manifestPath: byRole.get('sentry')?.manifestPath,
