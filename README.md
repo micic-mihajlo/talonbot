@@ -100,6 +100,10 @@ talonbot status
 talonbot operator
 talonbot agents
 talonbot agents reconcile
+talonbot work-items queue
+talonbot work-items claim <id> --owner <name>
+talonbot work-items note <id> --author <name> --text "waiting on logs"
+talonbot work-items priority <id> urgent
 talonbot doctor
 talonbot tasks list
 talonbot workers list
@@ -121,6 +125,13 @@ Current built-ins:
 - `agents/worker/`
 - `agents/watchdog/`
 
+The coordinator owns the shared work queue surfaced through `work-items`. Each work item keeps coordination state such as:
+
+- priority (`low`, `normal`, `high`, `urgent`)
+- claim ownership
+- source summary
+- coordinator notes
+
 ## API surface (most-used)
 
 - `GET /health`
@@ -135,6 +146,11 @@ Current built-ins:
 - `GET /tasks/:id/report`
 - `GET /work-items`
 - `GET /work-items/:id`
+- `GET /work-items/queue`
+- `POST /work-items/:id/claim`
+- `POST /work-items/:id/release`
+- `POST /work-items/:id/note`
+- `POST /work-items/:id/priority`
 - `POST /tasks/:id/retry`
 - `POST /tasks/:id/cancel`
 - `GET /workers`

@@ -24,7 +24,7 @@ import { createLogger } from '../utils/logger.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import { TaskUpdateNotifier, type OutboundThreadMessage, type OutboundThreadSender } from './task-update-notifier.js';
 import type { TaskThreadBinding } from './store.js';
-import type { TaskIntent, RequiredArtifactKind } from '../orchestration/types.js';
+import type { TaskIntent, RequiredArtifactKind, WorkItemPriority } from '../orchestration/types.js';
 
 export interface DispatchResult {
   accepted: boolean;
@@ -169,6 +169,7 @@ const REPO_CREATION_CUES = [
   /\bcreate\b.*\bnew\b.*\b(?:github\s+)?repo(?:sitory)?\b/i,
   /\b(?:create|make|spin up|bootstrap|scaffold)\b.*\b(?:github\s+)?repo(?:sitory)?\b/i,
 ];
+const HIGH_PRIORITY_CUES = [/\burgent\b/i, /\basap\b/i, /\bcritical\b/i, /\bincident\b/i, /\bp0\b/i];
 
 const inferTargetRepoFullName = (text: string): string | undefined => {
   const trimmed = text.trim();
@@ -195,6 +196,32 @@ const inferTaskTimeoutMs = (text: string, baseTimeoutMs: number, targetRepoFullN
     return undefined;
   }
   return Math.max(boundedBase, HEAVY_TASK_TIMEOUT_MS);
+};
+
+const inferWorkItemPriority = (text: string, taskIntent: TaskIntent): WorkItemPriority => {
+  if (HIGH_PRIORITY_CUES.some((pattern) => pattern.test(text))) {
+    return 'urgent';
+  }
+  if (taskIntent === 'ops') {
+    return 'high';
+  }
+  if (taskIntent === 'implementation' || taskIntent === 'review') {
+    return 'normal';
+  }
+  return 'low';
+};
+
+const withIndefiniteArticle = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return 'a task';
+  return /^[aeiou]/i.test(trimmed) ? `an ${trimmed}` : `a ${trimmed}`;
+};
+
+const buildSourceSummary = (message: InboundMessage, taskIntent: TaskIntent) => {
+  const sender = message.senderName || message.senderId || 'unknown sender';
+  const channel = message.sourceChannelId || 'unknown channel';
+  const thread = message.sourceThreadId ? ` thread ${message.sourceThreadId}` : '';
+  return `${sender} requested ${withIndefiniteArticle(taskIntent)} task via ${message.source} in ${channel}${thread}`.trim();
 };
 
 const normalizeTaskArtifactKinds = (artifacts?: ReadonlyArray<string> | string | undefined): RequiredArtifactKind[] | undefined => {
@@ -1123,11 +1150,17 @@ export class ControlPlane {
           senderName: message.senderName,
           receivedAt: message.receivedAt,
         },
+        coordination: {
+          priority: inferWorkItemPriority(text, policy.taskIntent),
+          sourceSummary: buildSourceSummary(message, policy.taskIntent),
+        },
       });
 
       await this.trackTaskBinding(task.id, sessionKey, message);
+      const queuedTitle = task.title || text;
+      const queuedPriority = task.coordination?.priority || inferWorkItemPriority(text, policy.taskIntent);
       await callbacks.reply(
-        `Queued task ${task.id} (repo: ${task.repoId}). I will post progress and final artifacts in this thread.`,
+        `Queued work item ${task.id} (${queuedTitle}) with ${queuedPriority} priority for repo ${task.repoId}. I will post progress and final artifacts in this thread.`,
       );
       return {
         accepted: true,

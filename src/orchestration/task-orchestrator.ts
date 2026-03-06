@@ -11,6 +11,9 @@ import type {
   RequiredArtifactKind,
   SubmitTaskInput,
   TaskArtifact,
+  WorkItemCoordination,
+  WorkItemNote,
+  WorkItemPriority,
   TaskLifecycleEvent,
   TaskLifecycleEventType,
   TaskProgressReport,
@@ -87,6 +90,9 @@ const normalizeArtifactKinds = (artifacts?: ReadonlyArray<string> | undefined): 
 };
 
 const uniqueArtifacts = (artifacts: ReadonlyArray<RequiredArtifactKind>) => [...new Set(artifacts)];
+const WORK_ITEM_PRIORITIES: WorkItemPriority[] = ['low', 'normal', 'high', 'urgent'];
+const isWorkItemPriority = (value: unknown): value is WorkItemPriority =>
+  value === 'low' || value === 'normal' || value === 'high' || value === 'urgent';
 
 const TASK_INTENT_TOKEN_SETS: ReadonlyArray<{
   intent: TaskIntent;
@@ -344,7 +350,16 @@ export class TaskOrchestrator {
   }
 
   listWorkItems() {
-    return this.listTasks().map((task) => this.toWorkItem(task));
+    return this.listTasks()
+      .map((task) => this.toWorkItem(task))
+      .sort((a, b) => {
+        const priorityDelta = WORK_ITEM_PRIORITIES.indexOf(b.coordination.priority) - WORK_ITEM_PRIORITIES.indexOf(a.coordination.priority);
+        if (priorityDelta !== 0) return priorityDelta;
+        if (a.coordination.claimStatus !== b.coordination.claimStatus) {
+          return a.coordination.claimStatus === 'unclaimed' ? -1 : 1;
+        }
+        return b.updatedAt.localeCompare(a.updatedAt);
+      });
   }
 
   getWorkItem(workItemId: string) {
@@ -372,6 +387,129 @@ export class TaskOrchestrator {
 
   getMemoryStatus() {
     return this.memory.status();
+  }
+
+  getWorkQueueSnapshot() {
+    const items = this.listWorkItems();
+    const open = items.filter((item) => item.status !== 'done' && item.status !== 'failed' && item.status !== 'cancelled');
+    return {
+      total: items.length,
+      open: open.length,
+      claimed: open.filter((item) => item.coordination.claimStatus === 'claimed').length,
+      unclaimed: open.filter((item) => item.coordination.claimStatus === 'unclaimed').length,
+      blocked: open.filter((item) => item.status === 'blocked').length,
+      urgent: open.filter((item) => item.coordination.priority === 'urgent').length,
+      high: open.filter((item) => item.coordination.priority === 'high').length,
+    };
+  }
+
+  async claimWorkItem(workItemId: string, owner: string) {
+    const task = this.tasks.get(workItemId);
+    if (!task) {
+      throw new Error('work_item_not_found');
+    }
+    const normalizedOwner = owner.trim();
+    if (!normalizedOwner) {
+      throw new Error('work_item_owner_required');
+    }
+    const now = new Date().toISOString();
+    task.coordination = {
+      ...this.normalizeCoordination(task.coordination, task),
+      owner: normalizedOwner,
+      claimedAt: now,
+      lastCoordinatorActionAt: now,
+    };
+    task.updatedAt = now;
+    task.events.push({
+      at: now,
+      kind: 'work_item_claimed',
+      message: `Work item claimed by ${normalizedOwner}.`,
+    });
+    await this.persist();
+    return this.toWorkItem(task);
+  }
+
+  async releaseWorkItem(workItemId: string) {
+    const task = this.tasks.get(workItemId);
+    if (!task) {
+      throw new Error('work_item_not_found');
+    }
+    const now = new Date().toISOString();
+    const coordination = this.normalizeCoordination(task.coordination, task);
+    task.coordination = {
+      ...coordination,
+      owner: undefined,
+      claimedAt: undefined,
+      lastCoordinatorActionAt: now,
+    };
+    task.updatedAt = now;
+    task.events.push({
+      at: now,
+      kind: 'work_item_released',
+      message: 'Work item released back to the coordinator queue.',
+    });
+    await this.persist();
+    return this.toWorkItem(task);
+  }
+
+  async addWorkItemNote(workItemId: string, author: string, text: string) {
+    const task = this.tasks.get(workItemId);
+    if (!task) {
+      throw new Error('work_item_not_found');
+    }
+    const normalizedAuthor = author.trim();
+    const normalizedText = text.trim();
+    if (!normalizedAuthor) {
+      throw new Error('work_item_note_author_required');
+    }
+    if (!normalizedText) {
+      throw new Error('work_item_note_text_required');
+    }
+    const now = new Date().toISOString();
+    const coordination = this.normalizeCoordination(task.coordination, task);
+    const note: WorkItemNote = {
+      at: now,
+      author: normalizedAuthor,
+      text: normalizedText,
+    };
+    task.coordination = {
+      ...coordination,
+      notes: [...coordination.notes, note].slice(-20),
+      lastCoordinatorActionAt: now,
+    };
+    task.updatedAt = now;
+    task.events.push({
+      at: now,
+      kind: 'work_item_note',
+      message: `${normalizedAuthor} added a coordinator note.`,
+    });
+    await this.persist();
+    return this.toWorkItem(task);
+  }
+
+  async setWorkItemPriority(workItemId: string, priority: WorkItemPriority) {
+    const task = this.tasks.get(workItemId);
+    if (!task) {
+      throw new Error('work_item_not_found');
+    }
+    if (!isWorkItemPriority(priority)) {
+      throw new Error('invalid_work_item_priority');
+    }
+    const now = new Date().toISOString();
+    const coordination = this.normalizeCoordination(task.coordination, task);
+    task.coordination = {
+      ...coordination,
+      priority,
+      lastCoordinatorActionAt: now,
+    };
+    task.updatedAt = now;
+    task.events.push({
+      at: now,
+      kind: 'work_item_priority',
+      message: `Work item priority set to ${priority}.`,
+    });
+    await this.persist();
+    return this.toWorkItem(task);
   }
 
   onLifecycle(listener: (event: TaskLifecycleEvent) => void) {
@@ -541,6 +679,7 @@ export class TaskOrchestrator {
       requiresVerifiedPr: input.requiresVerifiedPr,
       requiredArtifacts: input.requiredArtifacts,
       sourceContext: input.sourceContext,
+      coordination: input.coordination,
     });
 
     this.tasks.set(task.id, task);
@@ -637,6 +776,7 @@ export class TaskOrchestrator {
       requiresVerifiedPr: input.requiresVerifiedPr,
       requiredArtifacts: input.requiredArtifacts,
       sourceContext: input.sourceContext,
+      coordination: input.coordination,
       status: 'blocked',
     });
 
@@ -658,6 +798,7 @@ export class TaskOrchestrator {
         requiresVerifiedPr: input.requiresVerifiedPr,
         requiredArtifacts: input.requiredArtifacts,
         sourceContext: input.sourceContext,
+        coordination: input.coordination,
       });
       parent.children.push(child.id);
       this.tasks.set(child.id, child);
@@ -685,6 +826,7 @@ export class TaskOrchestrator {
     requirePrOverride?: boolean;
     requiredArtifacts?: SubmitTaskInput['requiredArtifacts'];
     sourceContext?: TaskSourceContext;
+    coordination?: Partial<WorkItemCoordination>;
   }): TaskRecord {
     const now = new Date().toISOString();
     const id = randomId('task');
@@ -721,6 +863,11 @@ export class TaskOrchestrator {
       text: input.text,
       repoId: input.repoId,
       sourceContext: normalizeSourceContext(input.sourceContext),
+      coordination: this.normalizeCoordination(input.coordination, {
+        text: input.text,
+        title,
+        sourceContext: normalizeSourceContext(input.sourceContext),
+      }),
       targetRepoFullName: typeof input.targetRepoFullName === 'string' && input.targetRepoFullName.trim()
         ? input.targetRepoFullName.trim()
         : undefined,
@@ -807,6 +954,41 @@ export class TaskOrchestrator {
       }
     }
     return missing;
+  }
+
+  private normalizeCoordination(
+    raw: Partial<WorkItemCoordination> | undefined,
+    fallback: {
+      text: string;
+      title?: string;
+      sourceContext?: TaskSourceContext;
+    },
+  ): WorkItemCoordination {
+    const title = typeof fallback.title === 'string' && fallback.title.trim() ? fallback.title.trim() : buildTaskTitle(fallback.text);
+    const sourceBits = [
+      fallback.sourceContext?.senderName || fallback.sourceContext?.senderId || 'unknown sender',
+      fallback.sourceContext?.transport ? `via ${fallback.sourceContext.transport}` : '',
+      fallback.sourceContext?.channelId ? `in ${fallback.sourceContext.channelId}` : '',
+    ].filter(Boolean);
+    const defaultSummary = sourceBits.length > 0 ? `${title} from ${sourceBits.join(' ')}` : title;
+    return {
+      priority: isWorkItemPriority(raw?.priority) ? raw.priority : 'normal',
+      owner: typeof raw?.owner === 'string' && raw.owner.trim() ? raw.owner.trim() : undefined,
+      claimedAt: typeof raw?.claimedAt === 'string' ? raw.claimedAt : undefined,
+      sourceSummary: typeof raw?.sourceSummary === 'string' && raw.sourceSummary.trim() ? raw.sourceSummary.trim() : defaultSummary,
+      notes: Array.isArray(raw?.notes)
+        ? raw.notes
+            .filter((note): note is WorkItemNote => Boolean(note && typeof note === 'object'))
+            .map((note) => ({
+              at: typeof note.at === 'string' ? note.at : new Date().toISOString(),
+              author: typeof note.author === 'string' ? note.author : 'coordinator',
+              text: typeof note.text === 'string' ? note.text : '',
+            }))
+            .filter((note) => note.text.trim().length > 0)
+            .slice(-20)
+        : [],
+      lastCoordinatorActionAt: typeof raw?.lastCoordinatorActionAt === 'string' ? raw.lastCoordinatorActionAt : undefined,
+    };
   }
 
   private hasArtifactForCompletionTask(task: TaskRecord, artifact: RequiredArtifactKind) {
@@ -1904,6 +2086,7 @@ export class TaskOrchestrator {
 
   private toWorkItem(task: TaskRecord): WorkItemRecord {
     const report = this.buildProgressReport(task);
+    const coordination = this.normalizeCoordination(task.coordination, task);
     return {
       id: task.id,
       taskId: task.id,
@@ -1920,6 +2103,10 @@ export class TaskOrchestrator {
       startedAt: task.startedAt,
       finishedAt: task.finishedAt,
       blockedReason: task.status === 'blocked' ? task.error : undefined,
+      coordination: {
+        ...coordination,
+        claimStatus: coordination.owner ? 'claimed' : 'unclaimed',
+      },
       report,
     };
   }
@@ -1998,6 +2185,11 @@ export class TaskOrchestrator {
       engineTimeoutMs: Number.isFinite(raw.engineTimeoutMs)
         ? normalizeTimeoutMs(raw.engineTimeoutMs, this.config.ENGINE_TIMEOUT_MS)
         : undefined,
+      coordination: this.normalizeCoordination(raw.coordination, {
+        text: typeof raw.text === 'string' ? raw.text : '',
+        title: typeof raw.title === 'string' ? raw.title : '',
+        sourceContext: normalizeSourceContext(raw.sourceContext),
+      }),
       taskIntent: isTaskIntent(raw.taskIntent) ? raw.taskIntent : inferredTaskIntent,
       requiresVerifiedPr,
       requiredArtifacts:

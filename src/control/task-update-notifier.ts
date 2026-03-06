@@ -72,7 +72,10 @@ const taskLabel = (task: TaskRecord) => {
 };
 
 const statusMessage = (task: TaskRecord, report: TaskProgressReport | null) => {
+  const coordination = task.coordination;
   const evidence: string[] = [];
+  if (coordination?.priority) evidence.push(`priority ${coordination.priority}`);
+  if (coordination?.owner) evidence.push(`owner ${coordination.owner}`);
   if (report?.evidence.prUrl) evidence.push(`PR ${report.evidence.prUrl}`);
   if (report?.evidence.commitSha) evidence.push(`commit ${report.evidence.commitSha}`);
   if (report?.evidence.checksSummary) evidence.push(`checks ${report.evidence.checksSummary}`);
