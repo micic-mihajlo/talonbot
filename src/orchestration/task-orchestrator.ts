@@ -30,7 +30,7 @@ import { WorkerLauncher } from './worker-launcher.js';
 import { OrchestrationHealthMonitor, type OrchestrationHealthSnapshot } from './health-monitor.js';
 import { extractGitHubPullRequestUrls, verifyGitHubPullRequestUrl } from '../utils/github-pr.js';
 import { createLogger } from '../utils/logger.js';
-import { getAgentPackage } from '../runtime/agent-registry.js';
+import { getAgentPackage, type AgentPackage } from '../runtime/agent-registry.js';
 
 const randomId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -310,6 +310,7 @@ export class TaskOrchestrator {
   private readonly launcher: WorkerLauncher;
   private readonly healthMonitor = new OrchestrationHealthMonitor();
   private readonly lifecycleListeners = new Map<string, (event: TaskLifecycleEvent) => void>();
+  private readonly workerAgentPackage: AgentPackage | null;
   private maintenanceInFlight = false;
   private lastMaintenanceAt = 0;
   private healthCache?: { atMs: number; snapshot: OrchestrationHealthSnapshot };
@@ -325,6 +326,7 @@ export class TaskOrchestrator {
     });
     this.memory = new TeamMemory(path.join(dataDir, 'memory'), config, createLogger('memory', config.LOG_LEVEL as any));
     this.engine = buildEngine(config, 'orchestrator');
+    this.workerAgentPackage = getAgentPackage('worker').package;
   }
 
   async initialize() {
@@ -1429,7 +1431,6 @@ export class TaskOrchestrator {
 
   private buildWorkerPrompt(task: TaskRecord, repoPath: string, worktreePath: string, memoryContext: string) {
     const policy = this.getTaskCompletionPolicy(task);
-    const workerSkill = getAgentPackage('worker').package;
     return buildWorkerAgentPrompt({
       taskTitle: task.title,
       taskText: task.text,
@@ -1440,7 +1441,7 @@ export class TaskOrchestrator {
       requiredArtifacts: policy.requiredArtifacts,
       requiresVerifiedPr: policy.requiresVerifiedPr,
       targetRepoFullName: task.targetRepoFullName,
-    }, workerSkill);
+    }, this.workerAgentPackage);
   }
 
   private async runWorkerTurn(task: TaskRecord, repo: RepoRegistration, worktreePath: string, memoryContext: string) {
