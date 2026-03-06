@@ -53,7 +53,7 @@ const normalizeSourceContext = (input?: TaskSourceContext): TaskSourceContext | 
   if (!transport || !channelId) {
     return undefined;
   }
-  const threadId = typeof input.threadId === 'string' ? input.threadId.trim() : input.threadId === null ? null : undefined;
+  const threadId = typeof input.threadId === 'string' ? (input.threadId.trim() || undefined) : input.threadId === null ? null : undefined;
   const messageId = typeof input.messageId === 'string' && input.messageId.trim() ? input.messageId.trim() : undefined;
   const senderId = typeof input.senderId === 'string' && input.senderId.trim() ? input.senderId.trim() : undefined;
   const senderName = typeof input.senderName === 'string' && input.senderName.trim() ? input.senderName.trim() : undefined;
