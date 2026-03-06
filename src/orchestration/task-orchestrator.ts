@@ -1874,7 +1874,7 @@ export class TaskOrchestrator {
         ? `Task is running in ${evidence.worktreePath} on ${evidence.branch}.`
         : 'Task is running, but launcher artifacts are missing (no-artifact).';
     }
-    if (task.status === 'blocked' && evidence.reviewSummary) {
+    if (task.status === 'blocked' && evidence.reviewSummary && task.error?.includes('review_feedback_required')) {
       message = `Task is blocked pending pull request review feedback. ${evidence.reviewSummary}`;
     }
     if (task.status === 'done') {
