@@ -45,6 +45,42 @@ describe('github automation checks parser', () => {
     expect(parsed.pending).toBe(false);
     expect(parsed.total).toBe(0);
   });
+
+  it('extracts preview URLs and review feedback from pull request context', () => {
+    const automation = new GitHubAutomation();
+    const parsed = automation.parsePullRequestContext(
+      JSON.stringify({
+        url: 'https://github.com/acme/project/pull/42',
+        headRefName: 'talon/task-42',
+        body: 'Preview deployment: https://preview-acme.vercel.app',
+        reviewDecision: 'CHANGES_REQUESTED',
+        statusCheckRollup: [{ name: 'build', conclusion: 'SUCCESS' }],
+        comments: [
+          {
+            body: 'Staging URL is https://staging.acme.dev and the login form is broken.',
+            author: { login: 'qa-user' },
+          },
+        ],
+        reviews: [
+          {
+            state: 'CHANGES_REQUESTED',
+            body: 'Please tighten the validation before merge.',
+            author: { login: 'reviewer-1' },
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.url).toBe('https://github.com/acme/project/pull/42');
+    expect(parsed.headRefName).toBe('talon/task-42');
+    expect(parsed.checks.passed).toBe(true);
+    expect(parsed.previewUrls).toContain('https://preview-acme.vercel.app');
+    expect(parsed.previewUrls).toContain('https://staging.acme.dev');
+    expect(parsed.review.decision).toBe('changes_requested');
+    expect(parsed.review.changeRequests).toBe(1);
+    expect(parsed.review.summary).toContain('changeRequests=1');
+    expect(parsed.review.summary).toContain('reviewer-1');
+  });
 });
 
 describe('github automation check polling', () => {

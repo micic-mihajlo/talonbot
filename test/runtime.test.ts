@@ -257,6 +257,24 @@ describe('HTTP control runtime', () => {
 
   it('serves work-item views for orchestrated tasks', async () => {
     const fakeTasks = {
+      getWorkerRuntimeSnapshot: async () => ({
+        runtime: 'tmux',
+        sessionPrefix: 'dev-agent',
+        activeTasks: [
+          {
+            taskId: 'task-1',
+            repoId: 'default',
+            status: 'running',
+            session: 'dev-agent-default-task-1',
+            worktreePath: '/tmp/worktree-1',
+            branch: 'talon/task-1',
+            startedAt: '2026-03-06T10:01:00.000Z',
+          },
+        ],
+        activeSessions: ['dev-agent-default-task-1'],
+        tmuxSessions: ['dev-agent-default-task-1'],
+        orphanedSessions: [],
+      }),
       listWorkItems: () => [
         {
           id: 'task-1',
@@ -294,7 +312,11 @@ describe('HTTP control runtime', () => {
               channelId: 'engineering',
               threadId: '123',
             },
-            evidence: {},
+            evidence: {
+              prUrl: 'https://github.com/acme/project/pull/42',
+              previewUrls: ['https://preview-acme.vercel.app'],
+              reviewSummary: 'decision=reviewed, reviews=1, comments=1',
+            },
           },
         },
       ],
@@ -322,7 +344,11 @@ describe('HTTP control runtime', () => {
                 artifactState: 'artifact-backed',
                 generatedAt: '2026-03-06T10:05:00.000Z',
                 message: 'Waiting on more logs.',
-                evidence: {},
+                evidence: {
+                  prUrl: 'https://github.com/acme/project/pull/42',
+                  previewUrls: ['https://preview-acme.vercel.app'],
+                  reviewSummary: 'decision=reviewed, reviews=1, comments=1',
+                },
               },
             }
           : null,
@@ -348,6 +374,22 @@ describe('HTTP control runtime', () => {
     const workItem = await requestHttp<{ workItem: { id: string; report: { message: string } } }>(httpPort, '/work-items/task-1');
     expect(workItem.statusCode).toBe(200);
     expect(workItem.payload.workItem.report.message).toContain('Waiting on more logs');
+
+    const agents = await requestHttp<{
+      agents: Array<{ role: string; state: string; summary: string; package: { skillLoaded: boolean; skillPath?: string } }>;
+      diagnostics: string[];
+    }>(httpPort, '/agents');
+    expect(agents.statusCode).toBe(200);
+    expect(agents.payload.agents.map((agent) => agent.role)).toEqual(['control', 'worker', 'sentry']);
+    expect(agents.payload.agents.find((agent) => agent.role === 'worker')).toMatchObject({
+      state: 'running',
+    });
+    expect(agents.payload.agents.find((agent) => agent.role === 'sentry')).toMatchObject({
+      state: 'disabled',
+    });
+    expect(agents.payload.agents.every((agent) => agent.package.skillLoaded)).toBe(true);
+    expect(agents.payload.agents.find((agent) => agent.role === 'worker')?.package.skillPath).toContain('/agents/worker-agent/SKILL.md');
+    expect(agents.payload.diagnostics).toEqual([]);
   });
 });
 

@@ -310,9 +310,10 @@ const probeRoute = async (route: string): Promise<ProbeResult> => {
 };
 
 const runOperatorSummary = async (asJson: boolean) => {
-  const [health, status, workers, release, sentry] = await Promise.all([
+  const [health, status, agents, workers, release, sentry] = await Promise.all([
     probeRoute('/health'),
     probeRoute('/status'),
+    probeRoute('/agents'),
     probeRoute('/workers'),
     probeRoute('/release/status'),
     probeRoute('/sentry/status'),
@@ -323,6 +324,7 @@ const runOperatorSummary = async (asJson: boolean) => {
     controlApi: baseUrl,
     health,
     status,
+    agents,
     workers,
     release,
     sentry,
@@ -368,6 +370,15 @@ const runOperatorSummary = async (asJson: boolean) => {
     if (workers.hint) process.stdout.write(`next: ${workers.hint}\n`);
   }
 
+  if (agents.ok) {
+    const payload = agents.payload as { agents?: Array<{ role?: string; state?: string }> };
+    const rendered = (payload.agents || []).map((agent) => `${agent.role || 'agent'}=${agent.state || 'unknown'}`).join(', ');
+    process.stdout.write(`agents: ${rendered || 'none'}\n`);
+  } else {
+    process.stdout.write(`agents: unavailable (${agents.error})\n`);
+    if (agents.hint) process.stdout.write(`next: ${agents.hint}\n`);
+  }
+
   if (release.ok) {
     const payload = release.payload as { release?: { current?: string | null; previous?: string | null } };
     process.stdout.write(`release: current=${payload.release?.current || 'none'} previous=${payload.release?.previous || 'none'}\n`);
@@ -399,6 +410,7 @@ const help = () => {
   process.stdout.write('  start|stop|restart|status|logs\n');
   process.stdout.write('  status [--api|--service|--json]\n');
   process.stdout.write('  operator [summary|status] [--json]\n');
+  process.stdout.write('  agents [list]\n');
   process.stdout.write('  sessions|attach --session <sessionKey>\n');
   process.stdout.write('  doctor\n');
   process.stdout.write('  env get|set|list|sync\n');
@@ -415,6 +427,7 @@ const help = () => {
   process.stdout.write('  talonbot install --doctor\n');
   process.stdout.write('  talonbot status --api\n');
   process.stdout.write('  talonbot operator --json\n');
+  process.stdout.write('  talonbot agents\n');
   process.stdout.write('  talonbot deploy --source /path/to/talonbot\n');
 };
 
@@ -489,6 +502,15 @@ const main = async () => {
 
   if (command === 'sessions') {
     json(await request('GET', '/sessions'));
+    return;
+  }
+
+  if (command === 'agents') {
+    const sub = args[0] || 'list';
+    if (sub !== 'list') {
+      fail(`unknown agents command: ${sub}`, 'Use: agents list');
+    }
+    json(await request('GET', '/agents'));
     return;
   }
 

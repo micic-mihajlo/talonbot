@@ -98,6 +98,7 @@ curl -s -H "Content-Type: application/json" \
 ```bash
 talonbot status
 talonbot operator
+talonbot agents
 talonbot doctor
 talonbot tasks list
 talonbot workers list
@@ -106,10 +107,24 @@ talonbot update --source /path/to/talonbot
 talonbot rollback previous
 ```
 
+## Agent packages
+
+Built-in role skills live under `agents/<agent-id>/`:
+
+- `agent.json` defines the role manifest and `skill_path`
+- `SKILL.md` is the file-backed instruction contract used by the runtime
+
+Current built-ins:
+
+- `agents/control-agent/`
+- `agents/worker-agent/`
+- `agents/sentry-agent/`
+
 ## API surface (most-used)
 
 - `GET /health`
 - `GET /status`
+- `GET /agents`
 - `POST /dispatch`
 - `GET /tasks`
 - `GET /tasks/:id`

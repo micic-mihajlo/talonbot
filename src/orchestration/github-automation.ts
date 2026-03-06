@@ -9,10 +9,32 @@ interface PullRequestCheckRecord {
   name?: string;
 }
 
+interface PullRequestActor {
+  login?: string;
+}
+
+interface PullRequestCommentRecord {
+  body?: string;
+  url?: string;
+  createdAt?: string;
+  author?: PullRequestActor;
+}
+
+interface PullRequestReviewRecord {
+  state?: string;
+  body?: string;
+  submittedAt?: string;
+  author?: PullRequestActor;
+}
+
 interface PullRequestView {
   url?: string;
   headRefName?: string;
   statusCheckRollup?: PullRequestCheckRecord[];
+  body?: string;
+  reviewDecision?: string;
+  comments?: PullRequestCommentRecord[];
+  reviews?: PullRequestReviewRecord[];
 }
 
 export interface PullRequestCheckState {
@@ -27,6 +49,53 @@ export interface PullRequestMatch {
   url: string;
   headRefName: string;
 }
+
+export interface PullRequestReviewSummary {
+  summary: string;
+  decision: string;
+  totalComments: number;
+  totalReviews: number;
+  changeRequests: number;
+}
+
+export interface PullRequestContext {
+  url?: string;
+  headRefName?: string;
+  checks: PullRequestCheckState;
+  previewUrls: string[];
+  review: PullRequestReviewSummary;
+}
+
+const PREVIEW_HOST_TOKENS = ['vercel.app', 'netlify.app', 'pages.dev', 'onrender.com', 'render.com', 'fly.dev', 'ngrok', 'loca.lt'];
+
+const extractUrls = (value: string) => value.match(/https?:\/\/[^\s<>"')\]]+/g) || [];
+
+const likelyPreviewUrl = (url: string, contextText: string) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'github.com' || host.endsWith('.github.com') || host.endsWith('.githubusercontent.com')) {
+      return false;
+    }
+    if (PREVIEW_HOST_TOKENS.some((token) => host.includes(token))) {
+      return true;
+    }
+    if (host.includes('preview') || host.includes('staging') || host.includes('sandbox')) {
+      return true;
+    }
+    return /\bpreview\b|\bstaging\b|\bdeploy(?:ment)?\b|\bdemo\b/i.test(contextText);
+  } catch {
+    return false;
+  }
+};
+
+const summarizeText = (value: string) => {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117).trimEnd()}...`;
+};
 
 const extractTaskToken = (value: string) => {
   const match = value.match(/task-\d+-[a-f0-9]+/i);
@@ -115,6 +184,17 @@ export class GitHubAutomation {
   async getPullRequestChecks(worktreePath: string, prUrlOrNumber: string): Promise<PullRequestCheckState> {
     const out = await this.gh(worktreePath, ['pr', 'view', prUrlOrNumber, '--json', 'url,statusCheckRollup']);
     return this.parsePullRequestChecks(out.stdout);
+  }
+
+  async getPullRequestContext(worktreePath: string, prUrlOrNumber: string): Promise<PullRequestContext> {
+    const out = await this.gh(worktreePath, [
+      'pr',
+      'view',
+      prUrlOrNumber,
+      '--json',
+      'url,headRefName,body,reviewDecision,comments,reviews,statusCheckRollup',
+    ]);
+    return this.parsePullRequestContext(out.stdout);
   }
 
   async waitForPullRequestChecks(
@@ -213,6 +293,92 @@ export class GitHubAutomation {
         pending: false,
         total: 0,
         failed: ['parse_error'],
+      };
+    }
+  }
+
+  parsePullRequestContext(raw: string): PullRequestContext {
+    try {
+      const parsed = JSON.parse(raw) as PullRequestView;
+      const body = typeof parsed.body === 'string' ? parsed.body : '';
+      const comments = Array.isArray(parsed.comments) ? parsed.comments : [];
+      const reviews = Array.isArray(parsed.reviews) ? parsed.reviews : [];
+      const previewUrls = new Set<string>();
+
+      for (const source of [body, ...comments.map((comment) => comment.body || ''), ...reviews.map((review) => review.body || '')]) {
+        for (const url of extractUrls(source)) {
+          if (likelyPreviewUrl(url, source)) {
+            previewUrls.add(url);
+          }
+        }
+      }
+
+      const reviewStates = reviews.map((review) => (typeof review.state === 'string' ? review.state.toUpperCase() : ''));
+      const explicitDecision = typeof parsed.reviewDecision === 'string' ? parsed.reviewDecision.toLowerCase() : '';
+      const changeRequests = reviewStates.filter((state) => state === 'CHANGES_REQUESTED').length;
+      const decision =
+        explicitDecision ||
+        (changeRequests > 0
+          ? 'changes_requested'
+          : reviewStates.includes('APPROVED')
+            ? 'approved'
+            : reviews.length > 0 || comments.length > 0
+              ? 'reviewed'
+              : 'none');
+
+      const highlights = [
+        ...comments
+          .map((comment) => {
+            const snippet = summarizeText(comment.body || '');
+            if (!snippet) return '';
+            return `${comment.author?.login || 'comment'}: ${snippet}`;
+          })
+          .filter(Boolean),
+        ...reviews
+          .map((review) => {
+            const snippet = summarizeText(review.body || '');
+            if (!snippet) return '';
+            return `${(review.state || 'review').toLowerCase()} by ${review.author?.login || 'reviewer'}: ${snippet}`;
+          })
+          .filter(Boolean),
+      ].slice(0, 2);
+
+      const reviewSummaryParts = [
+        `decision=${decision}`,
+        `reviews=${reviews.length}`,
+        `comments=${comments.length}`,
+      ];
+      if (changeRequests > 0) {
+        reviewSummaryParts.push(`changeRequests=${changeRequests}`);
+      }
+      if (highlights.length > 0) {
+        reviewSummaryParts.push(`highlights=${highlights.join(' | ')}`);
+      }
+
+      return {
+        url: typeof parsed.url === 'string' ? parsed.url : undefined,
+        headRefName: typeof parsed.headRefName === 'string' ? parsed.headRefName : undefined,
+        checks: this.parsePullRequestChecks(raw),
+        previewUrls: Array.from(previewUrls),
+        review: {
+          summary: reviewSummaryParts.join(', '),
+          decision,
+          totalComments: comments.length,
+          totalReviews: reviews.length,
+          changeRequests,
+        },
+      };
+    } catch {
+      return {
+        checks: this.parsePullRequestChecks(raw),
+        previewUrls: [],
+        review: {
+          summary: 'review context unavailable',
+          decision: 'unknown',
+          totalComments: 0,
+          totalReviews: 0,
+          changeRequests: 0,
+        },
       };
     }
   }
