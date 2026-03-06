@@ -28,19 +28,19 @@ export interface WorkerPromptInput {
 
 const FALLBACK_SKILLS: Record<AgentRole, string> = {
   control: [
-    '# Control Agent',
+    '# Coordinator',
     '',
     'You coordinate inbound work, preserve source context, and keep operators informed.',
     'Delegate execution rather than doing task-scoped repo work yourself.',
   ].join('\n'),
   worker: [
-    '# Worker Agent',
+    '# Worker',
     '',
     'You are a task-scoped engineering worker operating inside an isolated worktree.',
     'Complete the assigned task and return structured, verifiable evidence.',
   ].join('\n'),
   sentry: [
-    '# Sentry Agent',
+    '# Watchdog',
     '',
     'You monitor blocked and failed tasks that require escalation.',
     'Persist incidents and summarize what operators need to review.',
@@ -48,9 +48,9 @@ const FALLBACK_SKILLS: Record<AgentRole, string> = {
 };
 
 export const CONTROL_AGENT_PROFILE: AgentProfile = {
-  id: 'control-agent',
+  id: 'coordinator',
   role: 'control',
-  name: 'Control Agent',
+  name: 'Coordinator',
   objective: 'Route incoming work, preserve thread context, and keep execution policy visible to operators.',
   operatingMode: 'Always-on session router and task coordinator.',
   responsibilities: [
@@ -62,9 +62,9 @@ export const CONTROL_AGENT_PROFILE: AgentProfile = {
 };
 
 export const WORKER_AGENT_PROFILE: AgentProfile = {
-  id: 'worker-agent',
+  id: 'worker',
   role: 'worker',
-  name: 'Worker Agent',
+  name: 'Worker',
   objective: 'Execute one scoped engineering task inside an isolated worktree and return verifiable evidence.',
   operatingMode: 'Task-scoped execution with structured JSON output.',
   responsibilities: [
@@ -76,9 +76,9 @@ export const WORKER_AGENT_PROFILE: AgentProfile = {
 };
 
 export const SENTRY_AGENT_PROFILE: AgentProfile = {
-  id: 'sentry-agent',
+  id: 'watchdog',
   role: 'sentry',
-  name: 'Sentry Agent',
+  name: 'Watchdog',
   objective: 'Watch orchestration outcomes and persist escalation incidents for operator follow-up.',
   operatingMode: 'Background incident scanner with durable state.',
   responsibilities: [

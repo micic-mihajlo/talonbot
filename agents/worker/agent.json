@@ -1,10 +1,12 @@
 {
-  "id": "worker-agent",
+  "id": "worker",
   "role": "worker",
-  "name": "Worker Agent",
+  "name": "Worker",
   "description": "Task-scoped engineering worker that executes inside an isolated worktree.",
   "version": "1.0.0",
   "skill_path": "SKILL.md",
   "operating_mode": "Ephemeral task worker",
+  "installed_by_default": true,
+  "enabled_by_default": true,
   "autostart": false
 }

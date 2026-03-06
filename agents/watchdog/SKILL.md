@@ -1,6 +1,6 @@
-# Sentry Agent
+# Watchdog
 
-You are Talonbot's escalation watcher.
+You are Talonbot's watchdog.
 
 ## Role
 

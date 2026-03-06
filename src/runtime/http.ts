@@ -9,18 +9,20 @@ import type { AppConfig } from '../config.js';
 import type { TaskOrchestrator } from '../orchestration/task-orchestrator.js';
 import type { BridgeSupervisor } from '../bridge/supervisor.js';
 import type { ReleaseManager } from '../ops/release-manager.js';
-import type { SentryAgent } from '../orchestration/sentry-agent.js';
 import { runSecurityAudit } from '../security/audit.js';
 import { createDiagnosticsBundle } from '../diagnostics/bundle.js';
 import { ensureDir } from '../utils/path.js';
 import type { ChatSdkTransport } from '../transports/chat-sdk/index.js';
 import { buildAgentRuntimeSnapshot } from './agents.js';
+import type { WatchdogService } from './watchdog-service.js';
+import type { AgentLifecycleManager } from './agent-manager.js';
 
 export interface RuntimeServices {
   tasks?: TaskOrchestrator;
   bridge?: BridgeSupervisor;
   release?: ReleaseManager;
-  sentry?: SentryAgent;
+  sentry?: WatchdogService;
+  agentManager?: AgentLifecycleManager;
   chatSdkTransport?: ChatSdkTransport;
   transportStatus?: () => unknown;
   memoryStatus?: () => unknown;
@@ -173,6 +175,17 @@ const tryExtractWorkerRoute = (pathname: string) => {
   return null;
 };
 
+const tryExtractAgentRoute = (pathname: string) => {
+  const action = pathname.match(/^\/agents\/([^/]+)\/(install|uninstall|enable|disable|autostart-on|autostart-off|start|stop)$/);
+  if (!action) {
+    return null;
+  }
+  return {
+    id: decodeURIComponent(action[1]),
+    action: action[2] as 'install' | 'uninstall' | 'enable' | 'disable' | 'autostart-on' | 'autostart-off' | 'start' | 'stop',
+  };
+};
+
 export const createHttpServer = (
   control: ControlPlane,
   config: AppConfig,
@@ -309,8 +322,58 @@ export const createHttpServer = (
         control,
         tasks: services?.tasks,
         sentry: services?.sentry,
+        agentManager: services?.agentManager,
       });
       writeJson(res, 200, snapshot);
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/agents/reconcile') {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.agentManager) {
+        writeJson(res, 501, { error: 'agent_manager_not_configured' });
+        return;
+      }
+      const reconciled = await services.agentManager.reconcile();
+      const snapshot = await buildAgentRuntimeSnapshot({
+        control,
+        tasks: services?.tasks,
+        sentry: services?.sentry,
+        agentManager: services.agentManager,
+      });
+      writeJson(res, 200, { reconciled, agents: snapshot.agents, diagnostics: snapshot.diagnostics });
+      return;
+    }
+
+    const agentRoute = tryExtractAgentRoute(pathname);
+    if (agentRoute) {
+      if (!requireAuth(req, config, res)) return;
+      if (!services?.agentManager) {
+        writeJson(res, 501, { error: 'agent_manager_not_configured' });
+        return;
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { error: 'method_not_allowed' });
+        return;
+      }
+      try {
+        const action =
+          agentRoute.action === 'autostart-on'
+            ? 'autostart_on'
+            : agentRoute.action === 'autostart-off'
+              ? 'autostart_off'
+              : agentRoute.action;
+        const agent = await services.agentManager.apply(agentRoute.id, action);
+        const snapshot = await buildAgentRuntimeSnapshot({
+          control,
+          tasks: services?.tasks,
+          sentry: services?.sentry,
+          agentManager: services.agentManager,
+        });
+        writeJson(res, 200, { agent, agents: snapshot.agents, diagnostics: snapshot.diagnostics });
+      } catch (error) {
+        writeJson(res, 400, { error: (error as Error).message });
+      }
       return;
     }
 

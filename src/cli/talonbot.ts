@@ -391,11 +391,11 @@ const runOperatorSummary = async (asJson: boolean) => {
 
   if (sentry.ok) {
     const payload = sentry.payload as { status?: { incidents?: number } };
-    process.stdout.write(`sentry: incidents=${payload.status?.incidents ?? 0}\n`);
+    process.stdout.write(`watchdog: incidents=${payload.status?.incidents ?? 0}\n`);
   } else if (sentry.error === 'not_configured') {
-    process.stdout.write('sentry: not configured\n');
+    process.stdout.write('watchdog: not configured\n');
   } else {
-    process.stdout.write(`sentry: unavailable (${sentry.error})\n`);
+    process.stdout.write(`watchdog: unavailable (${sentry.error})\n`);
     if (sentry.hint) process.stdout.write(`next: ${sentry.hint}\n`);
   }
 
@@ -410,7 +410,7 @@ const help = () => {
   process.stdout.write('  start|stop|restart|status|logs\n');
   process.stdout.write('  status [--api|--service|--json]\n');
   process.stdout.write('  operator [summary|status] [--json]\n');
-  process.stdout.write('  agents [list]\n');
+  process.stdout.write('  agents list|get|install|uninstall|enable|disable|autostart-on|autostart-off|start|stop|reconcile\n');
   process.stdout.write('  sessions|attach --session <sessionKey>\n');
   process.stdout.write('  doctor\n');
   process.stdout.write('  env get|set|list|sync\n');
@@ -420,6 +420,7 @@ const help = () => {
   process.stdout.write('  deploy|update [--source <path>]\n');
   process.stdout.write('  rollback [target]\n');
   process.stdout.write('  sentry [status]\n');
+  process.stdout.write('  watchdog [status]\n');
   process.stdout.write('  audit [--deep]|prune [days]|firewall [--dry-run]\n');
   process.stdout.write('  bundle [--output <path>]\n');
   process.stdout.write('  uninstall --force [--purge]\n\n');
@@ -507,10 +508,36 @@ const main = async () => {
 
   if (command === 'agents') {
     const sub = args[0] || 'list';
-    if (sub !== 'list') {
-      fail(`unknown agents command: ${sub}`, 'Use: agents list');
+    if (sub === 'list') {
+      json(await request('GET', '/agents'));
+      return;
     }
-    json(await request('GET', '/agents'));
+    if (sub === 'reconcile') {
+      json(await request('POST', '/agents/reconcile'));
+      return;
+    }
+
+    const supported = new Set(['get', 'install', 'uninstall', 'enable', 'disable', 'autostart-on', 'autostart-off', 'start', 'stop']);
+    if (!supported.has(sub)) {
+      fail(
+        `unknown agents command: ${sub}`,
+        'Use: agents list|get|install|uninstall|enable|disable|autostart-on|autostart-off|start|stop|reconcile',
+      );
+    }
+    const id = getFlag(args, 'id') || args[1];
+    if (!id) {
+      fail(`agents ${sub} requires an agent id`, 'Example: talonbot agents start watchdog');
+    }
+    if (sub === 'get') {
+      const payload = (await request('GET', '/agents')) as { agents?: Array<{ id?: string }> };
+      const agent = payload.agents?.find((entry) => entry.id === id);
+      if (!agent) {
+        fail(`unknown agent: ${id}`);
+      }
+      json({ agent });
+      return;
+    }
+    json(await request('POST', `/agents/${encodeURIComponent(id)}/${sub}`));
     return;
   }
 
@@ -712,13 +739,13 @@ const main = async () => {
     return;
   }
 
-  if (command === 'sentry') {
+  if (command === 'sentry' || command === 'watchdog') {
     const sub = args[0] || 'status';
     if (sub === 'status') {
       json(await request('GET', '/sentry/status'));
       return;
     }
-    fail(`unknown sentry command: ${sub}`, 'Use: sentry status');
+    fail(`unknown ${command} command: ${sub}`, `Use: ${command} status`);
   }
 
   if (command === 'audit') {
