@@ -32,12 +32,12 @@ const createWorkingDirectory = async () => {
   return workingDirectory;
 };
 
-const readHttpBody = async <T>(res: http.IncomingMessage): Promise<T> => {
+const readHttpBody = async (res: http.IncomingMessage): Promise<string> => {
   const chunks: Buffer[] = [];
   for await (const chunk of res) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+  return Buffer.concat(chunks).toString('utf8');
 };
 
 const requestHttp = <T>(
@@ -48,7 +48,7 @@ const requestHttp = <T>(
     body?: unknown;
     headers?: Record<string, string>;
   } = {},
-): Promise<{ statusCode: number; payload: T }> => {
+): Promise<{ statusCode: number; payload: T; headers: http.IncomingHttpHeaders }> => {
   const method = init.method ?? 'GET';
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { ...(init.headers || {}) };
@@ -65,8 +65,12 @@ const requestHttp = <T>(
       },
       async (res) => {
         try {
-          const payload = await readHttpBody<T>(res);
-          resolve({ statusCode: res.statusCode || 0, payload });
+          const rawBody = await readHttpBody(res);
+          const contentType = String(res.headers['content-type'] || '');
+          const payload = contentType.includes('application/json')
+            ? (JSON.parse(rawBody || '{}') as T)
+            : ((rawBody as unknown) as T);
+          resolve({ statusCode: res.statusCode || 0, payload, headers: res.headers });
         } catch (error) {
           reject(error);
         }
@@ -659,6 +663,23 @@ describe('HTTP control auth gating', () => {
     });
     await controlPlane.stop();
     await rm(workingDirectory, { recursive: true, force: true });
+  });
+
+  it('returns 200 and text/html for compact status when authorized', async () => {
+    const compactStatus = await requestHttp<string>(httpPort, '/status/compact', {
+      headers: {
+        Authorization: 'Bearer super-secret-token',
+      },
+    });
+    expect(compactStatus.statusCode).toBe(200);
+    expect(String(compactStatus.headers['content-type'] || '')).toContain('text/html');
+    expect(compactStatus.payload).toContain('Talonbot Compact Status');
+  });
+
+  it('returns 401 for compact status when auth token is required and missing', async () => {
+    const denied = await requestHttp<{ error: string }>(httpPort, '/status/compact');
+    expect(denied.statusCode).toBe(401);
+    expect(denied.payload.error).toBe('unauthorized');
   });
 
   it('protects sessions and alias management behind auth token when enabled', async () => {

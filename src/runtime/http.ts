@@ -98,6 +98,93 @@ const unauthorized = (res: http.ServerResponse) => {
   writeJson(res, 401, { error: 'unauthorized' });
 };
 
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatUptime = (uptimeSeconds: number): string => {
+  const total = Math.max(0, Math.floor(uptimeSeconds));
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3_600);
+  const minutes = Math.floor((total % 3_600) / 60);
+  const seconds = total % 60;
+  const base = `${hours.toString().padStart(2, '0')}:${minutes
+    .toString()
+    .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  return days > 0 ? `${days}d ${base}` : base;
+};
+
+const writeHtml = (res: http.ServerResponse, statusCode: number, html: string) => {
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'text/html; charset=utf-8');
+  res.setHeader('cache-control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('pragma', 'no-cache');
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.end(html);
+};
+
+const renderCompactStatusPage = (input: {
+  status: string;
+  uptime: number;
+  runningCount: number;
+  doneCount: number;
+  failedCount: number;
+  transportHealth: unknown;
+}): string => {
+  const transportRaw = JSON.stringify(input.transportHealth ?? null, null, 2) || 'null';
+  const transportText = transportRaw.length > 1200 ? `${transportRaw.slice(0, 1200)}\n…` : transportRaw;
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="5" />
+    <title>Talonbot Compact Status</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; padding: 1rem; font: 14px/1.4 system-ui, -apple-system, sans-serif; background: #0b1020; color: #e8ecff; }
+      h1 { font-size: 1.1rem; margin: 0 0 0.8rem 0; }
+      .grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+      .card { background: #141b34; border: 1px solid #2a3563; border-radius: 10px; padding: 0.75rem; }
+      .label { color: #9fb0e4; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+      .value { margin-top: 0.35rem; font-size: 1.15rem; font-weight: 700; }
+      .split { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.35rem; }
+      .pill { background: #202a4d; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.82rem; }
+      pre { margin: 0.35rem 0 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Talonbot Compact Status</h1>
+    <div class="grid">
+      <section class="card">
+        <div class="label">Overall Status</div>
+        <div class="value">${escapeHtml(input.status)}</div>
+      </section>
+      <section class="card">
+        <div class="label">Uptime</div>
+        <div class="value">${escapeHtml(formatUptime(input.uptime))}</div>
+      </section>
+      <section class="card">
+        <div class="label">Task Counts</div>
+        <div class="split">
+          <span class="pill">running: ${escapeHtml(input.runningCount)}</span>
+          <span class="pill">done: ${escapeHtml(input.doneCount)}</span>
+          <span class="pill">failed: ${escapeHtml(input.failedCount)}</span>
+        </div>
+      </section>
+      <section class="card">
+        <div class="label">Transport Health</div>
+        <pre>${escapeHtml(transportText)}</pre>
+      </section>
+    </div>
+  </body>
+</html>`;
+};
+
 const requireAuth = (req: http.IncomingMessage, config: AppConfig, res: http.ServerResponse): boolean => {
   if (!config.CONTROL_AUTH_TOKEN) {
     return true;
@@ -292,6 +379,24 @@ export const createHttpServer = (
         };
       }
       writeJson(res, 200, body);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/status/compact') {
+      if (!requireAuth(req, config, res)) return;
+      const tasks = services?.tasks?.listTasks() || [];
+      const doneCount = tasks.filter((task) => task.state === 'done').length;
+      const failedCount = tasks.filter((task) => task.state === 'failed').length;
+      const runningCount = tasks.filter((task) => task.state === 'running').length;
+      const html = renderCompactStatusPage({
+        status: 'ok',
+        uptime: process.uptime(),
+        runningCount,
+        doneCount,
+        failedCount,
+        transportHealth: services?.transportStatus ? services.transportStatus() : null,
+      });
+      writeHtml(res, 200, html);
       return;
     }
 
